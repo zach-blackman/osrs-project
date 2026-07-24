@@ -162,6 +162,23 @@ def read_picks(scan_id):
         return [_from_row(r) for r in cx.execute(stmt).mappings()]
 
 
+def item_history(item_id, limit=50):
+    """One item's stored market data across recent scans, oldest first — the
+    scan-over-scan view in the drill-down. Bounded by KEEP_SCANS, so this
+    covers roughly the last SCAN_INTERVAL_MIN * KEEP_SCANS of wall time, not
+    a long history (that's what the wiki-sourced `spark` field is for)."""
+    stmt = (sa.select(picks.c.buy_price, picks.c.sell_price, picks.c.margin,
+                       picks.c.roi, picks.c.rank_all, picks.c.trend,
+                       scans.c.finished_at)
+            .join(scans, picks.c.scan_id == scans.c.id)
+            .where(picks.c.item_id == item_id, scans.c.status == "ok")
+            .order_by(scans.c.finished_at.desc())
+            .limit(limit))
+    with engine().connect() as cx:
+        rows = [dict(r) for r in cx.execute(stmt).mappings()]
+    return list(reversed(rows))
+
+
 def list_scans(limit=20):
     stmt = (sa.select(scans).order_by(scans.c.started_at.desc()).limit(limit))
     with engine().connect() as cx:

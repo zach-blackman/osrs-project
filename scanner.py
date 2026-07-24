@@ -422,6 +422,15 @@ def merch_score(rows, news=None):
             r["catalyst_bonus"] = bonus
             r["catalyst"] = note
 
+        # Kept on the row (not folded away) so the UI can show a per-item
+        # breakdown of what drove merch_score, not just the final number.
+        r["sc_throughput"] = round(100 * throughput, 1)
+        r["sc_liquidity"] = round(100 * liq, 1)
+        r["sc_volatility_rank"] = round(100 * vol, 1)
+        r["sc_value"] = round(100 * value, 1)
+        r["sc_trend_adj"] = round(100 * trend_adj.get(r["trend"], 0.0), 1)
+        r["sc_catalyst"] = round(100 * bonus, 1)
+
         raw = (0.30 * throughput + 0.20 * liq + 0.15 * vol
                + 0.20 * value + trend_adj.get(r["trend"], 0.0) + bonus)
         r["merch_score"] = round(100 * min(max(raw, 0.0), 1.0), 1)
@@ -463,7 +472,9 @@ def reason_for(r):
 PICK_KEYS = ("id", "name", "now", "margin", "roi", "gp_24h", "vol_day",
              "rank90", "rank_all", "z30", "trend", "volatility", "flip",
              "swing", "merch_score", "catalyst", "reason", "limit",
-             "buy_price", "sell_price", "tax", "sell_net", "units_24h", "spark")
+             "buy_price", "sell_price", "tax", "sell_net", "units_24h", "spark",
+             "sc_throughput", "sc_liquidity", "sc_volatility_rank", "sc_value",
+             "sc_trend_adj", "sc_catalyst")
 
 # What a snapshot stores per item: everything that is pure market data, i.e.
 # independent of any one user's capital or floor. Note the absentees —

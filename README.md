@@ -303,10 +303,41 @@ scraping.
 | `POST /api/refresh` | Trigger a scan. Single-flight: returns `started: false` if one is already running or if it was debounced (30 s). |
 | `GET /api/refresh/stream` | SSE `phase` / `log` / `progress` / `result` events, replayed from the start of the current scan. |
 | `GET /api/scans?limit=` | Snapshot history. |
+| `GET /api/item/{id}/history?limit=` | One item's stored fields across recent scans — feeds the drill-down's "last few scans" chart. Bounded by `KEEP_SCANS`, so it's roughly the last `SCAN_INTERVAL_MIN * KEEP_SCANS` of wall time, not long history. |
 | `GET /healthz` | Open (no auth) — snapshot presence and age. |
 
 The wiki is only ever contacted by the writer, on a schedule, with the custom
 user agent and the existing retry/backoff. Readers never call it.
+
+## Frontend (static/index.html)
+
+Still a single vanilla-JS file, no framework, no build step — filtering and
+the drill-down are ~250 extra lines in the same style as the rest of the page.
+
+- **Filter bar** — search (`/` to focus), a buy-dips/avoid mode toggle (wired
+  to the `rank_all` field already in each row), trend chips, score/volatility
+  thresholds, a news-only toggle, and a column-visibility menu for the fields
+  the table doesn't show by default (`limit`, `vol_day`, `units_24h`, `spark`,
+  `catalyst`, `reason`). Everything filters the **already-fetched** snapshot
+  client-side — the page now requests `top=200` up front so a filter can reach
+  every item in the snapshot, not just the first 50 by whatever sort was active.
+  A result-count bar with removable chips shows what's currently narrowing the
+  table; **Reset** clears it. Capital, floor, and all filters persist in
+  `localStorage` across reloads.
+- **Drill-down** — click a row (not a sort arrow) for a modal with the tax
+  breakdown (buy/sell/tax/net margin), `merch`/`flip`/`swing` score bars with
+  an optional expand into the underlying percentile components
+  (`sc_throughput`, `sc_liquidity`, `sc_volatility_rank`, `sc_value`), a
+  range-position gauge from `rank_all`/`z30`, the 30-day spark blown up, and a
+  small bar chart from the new `/api/item/{id}/history` endpoint. `Esc` closes
+  it, `j`/`k` step to the previous/next row in the current sort and filter.
+- **Mobile** — below 900px the table hides secondary columns
+  (`limit`, `vol_day`, `units_24h`, `spark`, `catalyst`, `reason`) via CSS; the
+  drill-down is the way to see the rest.
+
+None of this changed the reader's zero-network-call guarantee above — every
+control re-slices data already sitting in the browser, except opening the
+drill-down, which makes one lightweight call to the new history endpoint.
 
 ## Tests
 

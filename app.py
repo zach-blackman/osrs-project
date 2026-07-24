@@ -228,6 +228,13 @@ def api_scans(limit: int = Query(20, ge=1, le=100)):
     return {"scans": db.list_scans(limit)}
 
 
+@app.get("/api/item/{item_id}/history")
+def api_item_history(item_id: int, limit: int = Query(50, ge=1, le=200)):
+    """Scan-over-scan market data for one item — feeds the drill-down's
+    recent-history mini chart. Bounded by KEEP_SCANS; see db.item_history."""
+    return {"item_id": item_id, "history": db.item_history(item_id, limit)}
+
+
 @app.get("/healthz")
 def healthz():
     scan = db.latest_ok_scan()
