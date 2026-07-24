@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grand Exchange Merch Scanner</title>
+<style>
+  :root {
+    --bg: #0f1115; --bg2: #151922; --card: #171b24; --card2: #1c212c;
+    --line: #262c39; --line2: #313947;
+    --text: #e7ebf2; --muted: #9aa4b6; --faint: #6b7488;
+    --gold: #f4c430; --gold2: #d9a521;
+    --green: #3fbf7f; --red: #ef5b5b; --amber: #f0a340; --blue: #5b9bd5;
+    --shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    font-size: 14px; line-height: 1.45;
+    background:
+      radial-gradient(1200px 600px at 15% -10%, #1b2130 0, rgba(27,33,48,0) 60%),
+      radial-gradient(1000px 500px at 100% 0, #201a10 0, rgba(32,26,16,0) 55%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 28px 24px 80px; }
+  header { display: flex; align-items: flex-end; justify-content: space-between;
+           flex-wrap: wrap; gap: 16px; margin-bottom: 22px; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .logo {
+    width: 44px; height: 44px; flex: 0 0 44px; border-radius: 12px;
+    display: grid; place-items: center; font-size: 22px;
+    background: linear-gradient(145deg, #2a2f3c, #1a1e28);
+    border: 1px solid var(--line2);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  h1 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: .2px; }
+  h1 .accent { color: var(--gold); }
+  .tag { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  #status { color: var(--muted); font-size: 12.5px; }
+  #status b { color: var(--text); font-weight: 600; }
+  #status .stale { color: var(--amber); }
+  button#refresh {
+    font: inherit; font-weight: 600; font-size: 13.5px; cursor: pointer;
+    color: #241b04; padding: 10px 18px; border: 0; border-radius: 10px;
+    background: linear-gradient(180deg, #ffd75a, var(--gold) 55%, var(--gold2));
+    box-shadow: 0 4px 14px rgba(244,196,48,.28), inset 0 1px 0 rgba(255,255,255,.4);
+    transition: transform .08s ease, filter .15s ease;
+  }
+  button#refresh:hover { filter: brightness(1.05); }
+  button#refresh:active { transform: translateY(1px); }
+  button#refresh:disabled { filter: grayscale(.5) brightness(.8); cursor: wait; }
+  .capbox { display: flex; align-items: center; gap: 10px;
+            background: var(--card); border: 1px solid var(--line2);
+            border-radius: 10px; padding: 6px 8px 6px 12px; }
+  .capbox .field { display: flex; align-items: center; gap: 8px; }
+  .capbox .divider { width: 1px; align-self: stretch; background: var(--line2);
+                     margin: 2px 0; }
+  .capbox label { color: var(--faint); font-size: 11px; text-transform: uppercase;
+                  letter-spacing: .5px; white-space: nowrap; }
+  .capbox input {
+    width: 82px; font: inherit; font-size: 13.5px; font-weight: 600;
+    color: var(--gold); background: var(--bg2); border: 1px solid var(--line2);
+    border-radius: 7px; padding: 6px 9px; outline: none;
+  }
+  .capbox input:focus { border-color: var(--gold2); }
+  button#confirm {
+    font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+    color: var(--text); background: var(--card2); border: 1px solid var(--line2);
+    border-radius: 7px; padding: 7px 13px;
+  }
+  button#confirm:hover { border-color: var(--gold2); color: var(--gold); }
+  button#confirm:disabled { opacity: .5; cursor: wait; }
+
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 16px; min-width: 130px;
+  }
+  .stat .k { color: var(--faint); font-size: 11px; text-transform: uppercase;
+             letter-spacing: .6px; }
+  .stat .v { font-size: 18px; font-weight: 650; margin-top: 3px; }
+  .stat .v.gold { color: var(--gold); }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .tablescroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0;
+          font-variant-numeric: tabular-nums; }
+  thead th {
+    position: sticky; top: 0; z-index: 3; text-align: left; white-space: nowrap;
+    background: linear-gradient(180deg, #1b202b, #161a23);
+    color: var(--muted); font-weight: 600; font-size: 11.5px;
+    letter-spacing: .3px; text-transform: uppercase;
+    padding: 12px 14px; border-bottom: 1px solid var(--line2);
+    cursor: pointer; user-select: none;
+  }
+  thead th.num { text-align: right; }
+  thead th:hover { color: var(--text); }
+  thead th.nosort { cursor: default; }
+  thead th.nosort:hover { color: var(--muted); }
+  thead th .arrow { color: var(--gold); font-size: 10px; margin-left: 4px; }
+  svg.spark { display: block; }
+  td.sparkcell { padding-top: 6px; padding-bottom: 6px; }
+  tbody td { padding: 11px 14px; border-bottom: 1px solid var(--line);
+             white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--card2); }
+  td.num { text-align: right; }
+  td.rank { color: var(--faint); font-weight: 600; }
+  td.name { font-weight: 600; }
+  td.reason { white-space: normal; color: var(--muted); font-size: 12.5px;
+              min-width: 300px; max-width: 460px; line-height: 1.4; }
+  .buy { color: var(--blue); font-weight: 600; }
+  .sell { color: var(--green); font-weight: 600; }
+  .muted { color: var(--faint); }
+
+  .pill {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; border: 1px solid transparent;
+  }
+  .t-rising  { color: var(--green); background: rgba(63,191,127,.12);
+               border-color: rgba(63,191,127,.3); }
+  .t-falling { color: var(--red);   background: rgba(239,91,91,.12);
+               border-color: rgba(239,91,91,.3); }
+  .t-bounce  { color: var(--amber); background: rgba(240,163,64,.12);
+               border-color: rgba(240,163,64,.3); }
+  .t-flat    { color: var(--muted); background: rgba(154,164,182,.1);
+               border-color: rgba(154,164,182,.25); }
+
+  .scorewrap { display: flex; align-items: center; gap: 8px;
+               justify-content: flex-end; }
+  .scorebar { width: 46px; height: 6px; border-radius: 4px; overflow: hidden;
+              background: rgba(255,255,255,.08); }
+  .scorebar > i { display: block; height: 100%; }
+  .scoreval { font-weight: 650; min-width: 24px; text-align: right; }
+
+  .news {
+    display: inline-flex; align-items: center; gap: 5px; cursor: help;
+    color: var(--gold); font-size: 12px; font-weight: 600;
+    background: rgba(244,196,48,.1); border: 1px solid rgba(244,196,48,.28);
+    padding: 2px 8px; border-radius: 999px;
+  }
+
+  .foot { color: var(--faint); font-size: 12px; margin-top: 16px;
+          line-height: 1.6; }
+
+  #overlay {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    background: rgba(8,10,14,.78); backdrop-filter: blur(3px);
+    align-items: center; justify-content: center; padding: 24px;
+  }
+  #overlay.on { display: flex; }
+  .console {
+    width: min(760px, 96vw); background: #0d1017;
+    border: 1px solid var(--line2); border-radius: 14px;
+    box-shadow: 0 24px 70px rgba(0,0,0,.6); overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .con-head {
+    display: flex; align-items: center; gap: 8px; padding: 11px 16px;
+    background: linear-gradient(180deg, #191e28, #12161e);
+    border-bottom: 1px solid var(--line2);
+  }
+  .con-head .dot { width: 11px; height: 11px; border-radius: 50%;
+                   background: #ef5b5b; box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
+  .con-head .dot.amber { background: #f0a340; }
+  .con-head .dot.grn { background: #3fbf7f; }
+  .con-title { margin-left: 8px; font-weight: 600; font-size: 13px; color: var(--text); }
+  .con-title #con-phase { color: var(--gold); }
+  .con-pct { margin-left: auto; font-weight: 700; font-size: 13px;
+             color: var(--gold); font-variant-numeric: tabular-nums; }
+  .con-close {
+    margin-left: 12px; font: inherit; font-size: 12px; cursor: pointer;
+    color: var(--muted); background: transparent; border: 1px solid var(--line2);
+    border-radius: 7px; padding: 3px 10px;
+  }
+  .con-close:hover { color: var(--text); border-color: var(--gold2); }
+  .con-progress { height: 6px; background: rgba(255,255,255,.06); position: relative; }
+  .con-progress > i {
+    display: block; height: 100%; width: 0;
+    background: linear-gradient(90deg, var(--gold2), var(--gold));
+    box-shadow: 0 0 12px rgba(244,196,48,.5);
+    transition: width .25s ease;
+  }
+  .con-progress.indet > i {
+    width: 32% !important; border-radius: 4px;
+    animation: slide 1.1s ease-in-out infinite;
+  }
+  @keyframes slide { 0% { margin-left: -32%; } 100% { margin-left: 100%; } }
+  .con-log {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo,
+                 Consolas, monospace;
+    font-size: 12px; line-height: 1.55; color: var(--muted);
+    padding: 12px 16px; height: 320px; max-height: 52vh; overflow-y: auto;
+    background:
+      repeating-linear-gradient(180deg, transparent 0 21px, rgba(255,255,255,.015) 21px 42px);
+  }
+  .con-log .ln { white-space: pre-wrap; word-break: break-word; }
+  .con-log .ln::before { content: "› "; color: var(--faint); }
+  .con-log .ln.ok { color: #cfe9d8; }
+  .con-log .ln.ok::before { content: "✓ "; color: var(--green); }
+  .con-log .ln.err { color: #f3b6b6; }
+  .con-log .ln.err::before { content: "✗ "; color: var(--red); }
+  .con-log .ln.dim { color: var(--faint); }
+  .con-log .ln.phase {
+    color: var(--gold); margin-top: 8px; font-weight: 600;
+    border-top: 1px solid var(--line); padding-top: 8px;
+  }
+  .con-log .ln.phase::before { content: "» "; color: var(--gold2); }
+  .con-log .ln.phase:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
+  .con-cursor::after {
+    content: "▌"; color: var(--gold); animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .empty { text-align: center; color: var(--muted); padding: 40px 16px; }
+  .err { text-align: center; color: var(--red); padding: 28px 16px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="logo">&#9876;</div>
+        <div>
+          <h1>Grand Exchange <span class="accent">Merch Scanner</span></h1>
+          <div class="tag">Live RuneLite prices &middot; user-set item floor &middot; margin net of GE tax &middot; gp/24h capital-aware</div>
+        </div>
+      </div>
+      <div class="controls">
+        <span id="status">Loading&hellip;</span>
+        <div class="capbox">
+          <div class="field">
+            <label for="capital">Liquid capital</label>
+            <input id="capital" type="text" value="700m" spellcheck="false"
+                   autocomplete="off" title="how much gp you can deploy — e.g. 700m, 1.5b">
+          </div>
+          <div class="divider"></div>
+          <div class="field">
+            <label for="floor">Item floor</label>
+            <input id="floor" type="text" value="500k" spellcheck="false"
+                   autocomplete="off" title="ignore items trading below this — e.g. 500k, 1m">
+          </div>
+          <button id="confirm">Apply</button>
+        </div>
+        <button id="refresh">&#10227; Refresh</button>
+      </div>
+    </header>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="card">
+      <div class="tablescroll">
+        <table>
+          <thead>
+            <tr>
+              <th data-k="rank" class="num">#</th>
+              <th data-k="name">Item</th>
+              <th data-k="buy_price" class="num">Buy @</th>
+              <th data-k="sell_price" class="num">Sell @ <span class="muted">(safe)</span></th>
+              <th data-k="margin" class="num">Margin</th>
+              <th data-k="roi" class="num">ROI</th>
+              <th data-k="limit" class="num">Buy limit <span class="muted">/4h</span></th>
+              <th data-k="units_24h" class="num">Units/24h</th>
+              <th data-k="gp_24h" class="num">gp / 24h</th>
+              <th data-k="vol_day" class="num">Vol/day</th>
+              <th data-k="trend">Trend</th>
+              <th class="nosort">30d</th>
+              <th data-k="merch_score" class="num">Score</th>
+              <th data-k="catalyst">News</th>
+              <th data-k="reason">Reasoning</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr><td colspan="15" class="empty">Loading the latest snapshot&hellip;</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="foot">
+      <b>Buy @</b> is the current insta-sell price (place your buy offer here); <b>Sell @ (safe)</b>
+      is the current insta-buy price &mdash; selling into it fills immediately and nets the margin shown after the 2% GE tax.<br>
+      Prices are real trades observed by RuneLite and will not match the GE's lagged guide price.
+      &ldquo;News&rdquo; badges are a best-effort keyword match against recent OSRS updates &mdash; a hint, not authoritative release data.<br>
+      Capital and floor are applied to the shared snapshot instantly &mdash; only <b>Refresh</b> costs a trip to the wiki, and the whole clan shares it.
+    </div>
+  </div>
+
+  <div id="overlay">
+    <div class="console">
+      <div class="con-head">
+        <span class="dot"></span><span class="dot amber"></span><span class="dot grn"></span>
+        <span class="con-title">live scan &mdash; <span id="con-phase">starting&hellip;</span></span>
+        <span class="con-pct" id="con-pct"></span>
+        <button class="con-close" id="con-close">Hide</button>
+      </div>
+      <div class="con-progress indet" id="con-progress"><i id="con-bar"></i></div>
+      <div class="con-log" id="con-log"></div>
+    </div>
+  </div>
+
+<script>
+var DATA = [], sortKey = "margin", sortAsc = false, CAP = null, FLOOR = null;
+var ES = null, STATUS = null, LOADING = false;
+
+function $(id) { return document.getElementById(id); }
+
+function gp(n) {
+  if (n === null || n === undefined) return "-";
+  var a = Math.abs(n), s = n < 0 ? "-" : "";
+  if (a >= 1e9) return s + (a/1e9).toFixed(2) + "b";
+  if (a >= 1e6) return s + (a/1e6).toFixed(2) + "m";
+  if (a >= 1e3) return s + (a/1e3).toFixed(1) + "k";
+  return s + Math.round(a);
+}
+function esc(t) {
+  return (t == null ? "" : String(t)).replace(/[&<>"]/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];
+  });
+}
+function scoreColor(v) {
+  var h = Math.round(8 + (Math.max(0,Math.min(100,v))/100)*130);  // red->green
+  return "hsl(" + h + ",68%,52%)";
+}
+function fmtInt(n) { return Math.round(n||0).toLocaleString(); }
+function ago(secs) {
+  if (secs === null || secs === undefined) return "never";
+  if (secs < 60) return Math.round(secs) + "s ago";
+  if (secs < 3600) return Math.round(secs/60) + " min ago";
+  return (secs/3600).toFixed(1) + "h ago";
+}
+function sparkline(arr) {
+  if (!arr || arr.length < 2) return '<span class="muted">&mdash;</span>';
+  var w = 76, h = 24, pad = 2, n = arr.length;
+  var min = Math.min.apply(null, arr), max = Math.max.apply(null, arr);
+  var rng = (max - min) || 1;
+  var xy = function(v, i) {
+    var x = pad + (i / (n - 1)) * (w - 2 * pad);
+    var y = pad + (1 - (v - min) / rng) * (h - 2 * pad);
+    return [x, y];
+  };
+  var pts = arr.map(function(v, i){ var p = xy(v, i); return p[0].toFixed(1) + "," + p[1].toFixed(1); });
+  var up = arr[n-1] >= arr[0];
+  var col = up ? "#3fbf7f" : "#ef5b5b";     // matches --green / --red
+  var last = xy(arr[n-1], n-1);
+  var area = "0," + h + " " + pts.join(" ") + " " + (w) + "," + h;
+  return '<svg class="spark" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">'
+    + '<polyline points="' + area + '" fill="' + col + '" opacity="0.10" stroke="none"/>'
+    + '<polyline points="' + pts.join(" ") + '" fill="none" stroke="' + col
+      + '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
+    + '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="1.7" fill="' + col + '"/>'
+    + '</svg>';
+}
+
+function render() {
+  var rows = DATA.slice();
+  rows.forEach(function(r, i){ r.rank = i + 1; });   // rank from server order
+  if (sortKey !== "rank") {
+    rows.sort(function(a, b){
+      var x = a[sortKey], y = b[sortKey];
+      if (typeof x === "string" || typeof y === "string") {
+        x = (x||"").toString().toLowerCase(); y = (y||"").toString().toLowerCase();
+        return sortAsc ? (x<y?-1:x>y?1:0) : (x<y?1:x>y?-1:0);
+      }
+      x = x||0; y = y||0; return sortAsc ? x-y : y-x;
+    });
+  } else if (sortAsc) { rows.reverse(); }
+
+  var tb = $("rows");
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="15" class="empty">Nothing scored above the price floor. Try a lower floor.</td></tr>';
+    return;
+  }
+  var html = "";
+  rows.forEach(function(r){
+    var tcls = "pill t-" + esc(r.trend);
+    var cat = r.catalyst
+      ? '<span class="news" title="' + esc(r.catalyst) + '">&#128227; news</span>'
+      : '<span class="muted">&mdash;</span>';
+    var sc = Math.round(r.merch_score||0);
+    html += "<tr>"
+      + '<td class="num rank">' + r.rank + "</td>"
+      + '<td class="name">' + esc(r.name) + "</td>"
+      + '<td class="num buy">' + gp(r.buy_price) + "</td>"
+      + '<td class="num sell">' + gp(r.sell_price) + "</td>"
+      + '<td class="num">' + gp(r.margin) + "</td>"
+      + '<td class="num">' + (r.roi||0).toFixed(1) + "%</td>"
+      + '<td class="num muted">' + fmtInt(r.limit) + "</td>"
+      + '<td class="num muted">' + fmtInt(r.units_24h) + "</td>"
+      + '<td class="num sell">' + gp(r.gp_24h) + "</td>"
+      + '<td class="num muted">' + fmtInt(r.vol_day) + "</td>"
+      + '<td><span class="' + tcls + '">' + esc(r.trend) + "</span></td>"
+      + '<td class="sparkcell" title="30-day price trend">' + sparkline(r.spark) + "</td>"
+      + '<td class="num"><div class="scorewrap">'
+        + '<span class="scorebar"><i style="width:' + sc + '%;background:'
+        + scoreColor(sc) + '"></i></span>'
+        + '<span class="scoreval">' + sc + "</span></div></td>"
+      + "<td>" + cat + "</td>"
+      + '<td class="reason">' + esc(r.reason) + "</td>"
+      + "</tr>";
+  });
+  tb.innerHTML = html;
+  paintHeaders();
+}
+
+function paintHeaders() {
+  document.querySelectorAll("thead th").forEach(function(th){
+    var old = th.querySelector(".arrow"); if (old) old.remove();
+    if (th.getAttribute("data-k") === sortKey) {
+      var a = document.createElement("span");
+      a.className = "arrow"; a.textContent = sortAsc ? "▲" : "▼";
+      th.appendChild(a);
+    }
+  });
+}
+function renderStats() {
+  var el = $("stats");
+  if (!DATA.length) { el.innerHTML = ""; return; }
+  var best = DATA[0];
+  var avg = DATA.reduce(function(s,r){ return s + (r.merch_score||0); }, 0) / DATA.length;
+  var withNews = DATA.filter(function(r){ return r.catalyst; }).length;
+  var topGp = DATA.reduce(function(m,r){ return Math.max(m, r.gp_24h||0); }, 0);
+  el.innerHTML =
+      (CAP ? stat("Liquid capital", gp(CAP), true) : "")
+    + (FLOOR ? stat("Item floor", gp(FLOOR)) : "")
+    + stat("Picks", DATA.length)
+    + stat("Top pick", esc(best.name), true)
+    + stat("Best gp / 24h", gp(topGp), true)
+    + stat("Avg score", avg.toFixed(0))
+    + stat("With news", withNews);
+}
+function stat(k, v, gold) {
+  return '<div class="stat"><div class="k">' + k + '</div><div class="v'
+    + (gold ? " gold" : "") + '">' + v + '</div></div>';
+}
+
+function setSort(k) {
+  if (sortKey === k) sortAsc = !sortAsc;
+  else { sortKey = k; sortAsc = (k === "name"); }
+  render();
+}
+document.querySelectorAll("thead th").forEach(function(th){
+  var k = th.getAttribute("data-k");
+  if (!k) return;                       // 30d sparkline column isn't sortable
+  th.addEventListener("click", function(){ setSort(k); });
+});
+
+// ------------------------------------------------------- reads (instant)
+
+function statusLine() {
+  var st = $("status");
+  if (LOADING) { st.innerHTML = "Personalising&hellip;"; return; }
+  if (!STATUS) { st.innerHTML = "&hellip;"; return; }
+  if (STATUS.scanning) {
+    st.innerHTML = "<b>Scanning</b> the live Grand Exchange&hellip;";
+    return;
+  }
+  var stale = STATUS.age_seconds !== null && STATUS.age_seconds > 25 * 60;
+  var when = '<span class="' + (stale ? "stale" : "") + '">'
+    + ago(STATUS.age_seconds) + "</span>";
+  st.innerHTML = "<b>" + DATA.length + "</b> picks &middot; updated " + when
+    + " &middot; next scan every " + STATUS.interval_minutes + " min";
+}
+
+function loadPicks() {
+  var cap = $("capital").value.trim(), floor = $("floor").value.trim();
+  var q = [];
+  if (cap) q.push("capital=" + encodeURIComponent(cap));
+  if (floor) q.push("floor=" + encodeURIComponent(floor));
+  LOADING = true; statusLine();
+  $("confirm").disabled = true;
+  return fetch("/api/picks" + (q.length ? "?" + q.join("&") : ""))
+    .then(function(r){ return r.json().then(function(d){ d._code = r.status; return d; }); })
+    .then(function(d){
+      LOADING = false; $("confirm").disabled = false;
+      if (d._code === 503) {                       // no snapshot yet
+        DATA = []; renderStats();
+        $("rows").innerHTML = '<tr><td colspan="15" class="empty">'
+          + esc(d.error || "no data yet") + "</td></tr>";
+        if (d.scanning) attachStream(true);
+        return;
+      }
+      DATA = d.rows || [];
+      CAP = d.capital; FLOOR = d.floor;
+      $("capital").value = gp(CAP);
+      $("floor").value = gp(FLOOR);
+      sortKey = "margin"; sortAsc = false;
+      render(); renderStats(); statusLine();
+    })
+    .catch(function(e){
+      LOADING = false; $("confirm").disabled = false;
+      $("rows").innerHTML = '<tr><td colspan="15" class="err">Could not reach '
+        + 'the server: ' + esc(e.message) + "</td></tr>";
+    });
+}
+
+function pollStatus() {
+  return fetch("/api/status").then(function(r){ return r.json(); })
+    .then(function(d){
+      var wasScanning = STATUS && STATUS.scanning;
+      var newSnapshot = STATUS && d.updated_at !== STATUS.updated_at;
+      STATUS = d;
+      $("refresh").disabled = d.scanning;
+      statusLine();
+      if (d.scanning && !ES) attachStream(true);   // someone else started one
+      if (!d.scanning && wasScanning && newSnapshot) loadPicks();
+    })
+    .catch(function(){});
+}
+
+// ------------------------------------------------------ writes (a scan)
+
+function setBusy(on) {
+  $("refresh").disabled = on;
+  $("overlay").classList.toggle("on", on);
+}
+function conReset() {
+  $("con-log").innerHTML = "";
+  $("con-phase").textContent = "starting…";
+  $("con-pct").textContent = "";
+  $("con-bar").style.width = "0";
+  $("con-progress").classList.add("indet");
+}
+function conLog(msg, level) {
+  var log = $("con-log");
+  var atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  document.querySelectorAll("#con-log .con-cursor").forEach(function(el){
+    el.classList.remove("con-cursor");
+  });
+  var ln = document.createElement("div");
+  ln.className = "ln con-cursor" + (level && level !== "info" ? " " + level : "");
+  ln.textContent = msg;
+  log.appendChild(ln);
+  while (log.childNodes.length > 400) log.removeChild(log.firstChild);
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+function conProgress(done, total) {
+  var pr = $("con-progress");
+  pr.classList.remove("indet");
+  var pct = total ? Math.round((done / total) * 100) : 0;
+  $("con-bar").style.width = pct + "%";
+  $("con-pct").textContent = pct + "%";
+}
+
+/* Attach to whatever scan the writer is running. The stream replays the
+   log from the start, so joining late still shows the whole scan. */
+function attachStream(quiet) {
+  if (ES) return;
+  if (!quiet) conReset();
+  setBusy(true);
+  var es = new EventSource("/api/refresh/stream");
+  ES = es;
+  es.onmessage = function(ev) {
+    var d;
+    try { d = JSON.parse(ev.data); } catch (e) { return; }
+    if (d.kind === "phase") {
+      $("con-phase").textContent = d.label;
+      conLog(d.label, "phase");
+    } else if (d.kind === "log") {
+      conLog(d.msg, d.level);
+    } else if (d.kind === "progress") {
+      conProgress(d.done, d.total);
+    } else if (d.kind === "idle") {
+      es.close(); ES = null; setBusy(false);
+    } else if (d.kind === "result") {
+      es.close(); ES = null;
+      conProgress(1, 1);
+      conLog("snapshot stored — " + d.n_items + " items", "ok");
+      loadPicks().then(pollStatus);
+      setTimeout(function(){ setBusy(false); }, 600);
+    } else if (d.kind === "error") {
+      es.close(); ES = null;
+      conLog("scan failed: " + d.error, "err");
+      setTimeout(function(){ setBusy(false); }, 1500);
+      pollStatus();
+    }
+  };
+  es.onerror = function() {
+    if (!ES) return;                     // normal close after result
+    es.close(); ES = null;
+    conLog("connection lost — is the server still running?", "err");
+    setTimeout(function(){ setBusy(false); }, 1200);
+  };
+}
+
+function refresh() {
+  conReset();
+  setBusy(true);
+  fetch("/api/refresh", { method: "POST" })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.started && !d.scanning) {   // debounced: nothing to watch
+        conLog(d.reason || "no scan started", "dim");
+        setTimeout(function(){ setBusy(false); }, 1200);
+        return;
+      }
+      if (!d.started) conLog(d.reason, "dim");
+      attachStream(true);
+    })
+    .catch(function(e){
+      conLog("could not start a scan: " + e.message, "err");
+      setTimeout(function(){ setBusy(false); }, 1200);
+    });
+}
+
+$("refresh").addEventListener("click", refresh);
+$("confirm").addEventListener("click", function(){ loadPicks(); });
+$("con-close").addEventListener("click", function(){
+  $("overlay").classList.remove("on");   // scan continues in the background
+});
+["capital", "floor"].forEach(function(id){
+  $(id).addEventListener("keydown", function(e){
+    if (e.key === "Enter") loadPicks();
+  });
+});
+
+window.addEventListener("load", function(){
+  pollStatus().then(loadPicks);
+  setInterval(pollStatus, 15000);
+});
+</script>
+</body>
+</html>
