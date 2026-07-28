@@ -18,6 +18,8 @@ writer's per-scan wiki call budget. Treat them as daily-resolution signals.
         Takes scanner.rank_for()'s output, adds predictive fields. Does not
         change the sort order — callers sort by whichever new field their
         mode cares about (see predict_cli.py).
+
+        Adding these lines to test something. Fully ignore.
 """
 
 import scanner
