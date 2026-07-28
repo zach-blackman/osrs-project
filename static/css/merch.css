@@ -224,8 +224,23 @@ td.err { color: var(--loss); }
 }
 .ax-empty .k { font-family: var(--sans); font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 600; }
 #ax-content { overflow-y: auto; overflow-x: hidden; min-height: 0; min-width: 0; }
-.ax-head { padding: 14px 14px 10px; border-bottom: 1px solid var(--line); }
-.ax-title { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+.ax-head { padding: 14px 14px 10px; border-bottom: 1px solid var(--line); position: relative; }
+.ax-head-top {
+  display: flex; align-items: flex-start; gap: 10px; min-width: 0;
+}
+.ax-title {
+  flex: 1 1 auto; min-width: 0; font-size: 17px; font-weight: 700;
+  letter-spacing: -0.02em; padding-right: 4px;
+}
+.ax-watch {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; margin: -6px -6px 0 0; padding: 0;
+  border: 0; border-radius: 2px; background: transparent; color: var(--faint);
+  cursor: pointer;
+}
+.ax-watch:hover { color: var(--accent); background: var(--hover); }
+.ax-watch.on { color: var(--accent); }
+.ax-watch svg { display: block; flex: 0 0 auto; }
 .ax-sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .ax-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .ghost, a.ghost {

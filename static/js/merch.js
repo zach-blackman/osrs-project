@@ -763,15 +763,24 @@ function renderAction() {
 
   var watched = WATCH.indexOf(r.id) !== -1;
   var wiki = "https://oldschool.runescape.wiki/w/Special:Lookup?type=item&id=" + r.id;
+  var watchTitle = "Add to Watchlist";
+  var eyeSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>'
+    + '<circle cx="12" cy="12" r="3"/>'
+    + '</svg>';
   var html = ''
     + '<div class="ax-head">'
-    +   '<div class="ax-title">' + esc(r.name) + '</div>'
+    +   '<div class="ax-head-top">'
+    +     '<div class="ax-title">' + esc(r.name) + '</div>'
+    +     '<button type="button" class="ax-watch' + (watched ? ' on' : '') + '" id="ax-watch"'
+    +       ' title="' + watchTitle + '" aria-label="' + watchTitle + '"'
+    +       ' aria-pressed="' + (watched ? 'true' : 'false') + '">' + eyeSvg + '</button>'
+    +   '</div>'
     +   '<div class="ax-sub"><span class="trend t-' + esc(r.trend) + '">' + esc(r.trend) + '</span>'
     +   ' · ' + fmtInt(r.units_24h) + ' units/24h · ROI ' + (r.roi||0).toFixed(1) + '%</div>'
     +   '<div class="ax-actions">'
     +     '<button type="button" class="ghost" id="ax-copy-buy">Copy buy</button>'
     +     '<button type="button" class="ghost" id="ax-copy-sell">Copy sell</button>'
-    +     '<button type="button" class="ghost" id="ax-watch">' + (watched ? "Unwatch" : "Watch") + '</button>'
     +     '<a class="ghost" href="' + wiki + '" target="_blank" rel="noopener">Wiki</a>'
     +   '</div>'
     +   '<div class="ax-score"><span class="num">' + sc + '</span>'
