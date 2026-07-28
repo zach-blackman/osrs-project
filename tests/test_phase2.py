@@ -42,13 +42,22 @@ def main():
     now = time.time()
 
     print("upsert_items refreshes metadata")
-    db.upsert_items([{"id": 1, "name": "Old name", "limit": 10, "members": True}], now)
-    db.upsert_items([{"id": 1, "name": "New name", "limit": 25, "members": False}], now + 1)
+    db.upsert_items([{"id": 1, "name": "Old name", "limit": 10, "members": True,
+                       "highalch": 500, "value": 300}], now)
+    db.upsert_items([{"id": 1, "name": "New name", "limit": 25, "members": False,
+                       "highalch": 900, "value": 400}], now + 1)
     with db.engine().connect() as cx:
         import sqlalchemy as sa
         row = cx.execute(sa.select(db.items).where(db.items.c.item_id == 1)).mappings().first()
     check(row["name"] == "New name" and row["buy_limit"] == 25, "name/limit updated on upsert")
     check(row["members"] is False, "members flag updated on upsert")
+    check(row["highalch"] == 900 and row["value"] == 400, "highalch/value updated on upsert")
+    # Partial rows must not wipe known alch data.
+    db.upsert_items([{"id": 1, "name": "Same name", "limit": 25, "members": False}], now + 2)
+    with db.engine().connect() as cx:
+        import sqlalchemy as sa
+        row = cx.execute(sa.select(db.items).where(db.items.c.item_id == 1)).mappings().first()
+    check(row["highalch"] == 900, "partial upsert preserves highalch")
 
     print("\nhistory_ready_count gates FAST_SCAN")
     check(db.history_ready_count(min_days=45) == 0, "cold DB has zero ready history")

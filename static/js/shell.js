@@ -2,9 +2,12 @@
 (function (global) {
   "use strict";
 
+  // Tool convention: { id, href, label, status: "live"|"soon" }.
+  // Pair with static/tools/<id>.html, GET /<id> via _tool_html, and /api/<id>/….
   var TOOLS = [
-    { id: "merch", href: "/merch", label: "Merch Desk", status: "live" }
-    // Add tools here: { id: "foo", href: "/foo", label: "…", status: "soon" }
+    { id: "merch", href: "/merch", label: "Merch Desk", status: "live" },
+    { id: "alch", href: "/alch", label: "Alch Desk", status: "soon" },
+    { id: "movers", href: "/movers", label: "Movers Desk", status: "soon" }
   ];
 
   function $(id) { return document.getElementById(id); }

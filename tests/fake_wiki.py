@@ -33,6 +33,9 @@ def build_world(seed=7):
             "id": iid,
             "name": f"Test item {i} {rng.choice(['blade', 'tome', 'sigil'])}",
             "limit": limit,
+            "members": True,
+            "highalch": int(low * rng.uniform(1.05, 1.35)),
+            "value": int(low * 0.6),
         })
         latest[str(iid)] = {
             "high": high,

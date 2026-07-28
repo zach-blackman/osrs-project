@@ -41,7 +41,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # serving a pre-deploy shell.js that still did btn.textContent = "Light".
 _ASSET_REF = re.compile(r'((?:href|src)="/static/[^"?]+)(")')
 _STATIC_FINGERPRINT_FILES = (
-    "css/shell.css", "css/merch.css", "js/shell.js", "js/merch.js",
+    "css/shell.css", "css/merch.css", "css/alch.css", "css/movers.css",
+    "js/shell.js", "js/merch.js", "js/alch.js", "js/movers.js",
+    "js/tool-status.js",
 )
 
 
@@ -306,6 +308,191 @@ def api_item_history(item_id: int, limit: int = Query(50, ge=1, le=200)):
     return {"item_id": item_id, "history": db.item_history(item_id, limit)}
 
 
+@app.get("/api/alch")
+def api_alch(capital: str = Query(None), floor: str = Query(None),
+             nature: str = Query(None), top: int = Query(50, ge=1, le=200)):
+    """Alch Desk: high-alch profit ranking from stored mapping + latest pulse.
+
+    profit = highalch - buy_price - nature_cost. Buy price is the latest
+    insta-sell (low) from item_snapshots when available, else picks.
+    Cap/Floor personalise at read time — no wiki calls.
+    """
+    cap = _gp(capital, config.DEFAULT_CAPITAL)
+    flr = _gp(floor, config.DEFAULT_FLOOR)
+    nature_cost = _gp(nature, config.DEFAULT_NATURE_COST)
+
+    prices, scan = db.latest_snapshot_prices()
+    if not prices:
+        # Fallback: merch picks snapshot (legacy / no pulse yet).
+        scan, picks = _snapshot_or_none()
+        if not scan:
+            return JSONResponse(
+                {"rows": [], "capital": cap, "floor": flr,
+                 "nature_cost": nature_cost, "updated_at": None,
+                 "age_seconds": None, "error": "no snapshot yet",
+                 "note": (
+                     "High-alch profits from wiki mapping highalch minus GE "
+                     "insta-sell and nature rune cost. Scaffold — fire-staff "
+                     "mode and live nature pricing come later.")},
+                status_code=503)
+        prices = {
+            r["id"]: {"low": r.get("buy_price"), "high": r.get("sell_price"),
+                      "buy_vol_1h": r.get("buy_vol_1h"),
+                      "sell_vol_1h": r.get("sell_vol_1h")}
+            for r in picks if r.get("buy_price")
+        }
+
+    meta_by_id = db.items_with_alch(list(prices.keys()) or None)
+    rows = []
+    for iid, pulse in prices.items():
+        meta = meta_by_id.get(iid)
+        if not meta:
+            continue
+        highalch = meta.get("highalch")
+        buy = pulse.get("low")
+        if highalch is None or not buy or buy < flr:
+            continue
+        profit = int(highalch) - int(buy) - int(nature_cost)
+        if profit <= 0:
+            continue
+        limit = meta.get("buy_limit") or 0
+        units = min(limit * 6, cap // buy) if buy and limit else 0
+        rows.append({
+            "id": iid,
+            "name": meta.get("name") or f"Item {iid}",
+            "buy_price": int(buy),
+            "highalch": int(highalch),
+            "nature_cost": int(nature_cost),
+            "profit": profit,
+            "roi": round(profit / buy * 100, 2) if buy else 0,
+            "limit": limit,
+            "gp_24h": profit * units if units else 0,
+            "members": meta.get("members"),
+        })
+    rows.sort(key=lambda r: (r["profit"], r["gp_24h"]), reverse=True)
+    rows = rows[:top]
+    updated = (scan.get("finished_at") or scan.get("started_at")) if scan else None
+    return {
+        "rows": rows,
+        "capital": cap,
+        "floor": flr,
+        "nature_cost": nature_cost,
+        "scan_id": scan["id"] if scan else None,
+        "updated_at": updated,
+        "age_seconds": round(time.time() - updated) if updated else None,
+        "n_candidates": len(rows),
+        "note": (
+            "High-alch profits from wiki mapping highalch minus GE insta-sell "
+            "and nature rune cost. RuneLite prices, not guide price. Fire-staff "
+            "mode and live nature pricing are not modelled yet."),
+    }
+
+
+@app.get("/api/movers")
+def api_movers(window: int = Query(6, ge=2, le=36),
+               top: int = Query(50, ge=1, le=200)):
+    """Movers Desk: % price change and 1h volume spikes across recent pulses.
+
+    Pure DB derivation over item_snapshots — no wiki. `window` is how many
+    ok pulsed scans to look back (newest vs oldest in that window).
+    """
+    scan_rows = db.recent_ok_scan_ids(limit=window)
+    if len(scan_rows) < 2:
+        return {
+            "rows": [],
+            "window": window,
+            "scans_used": len(scan_rows),
+            "updated_at": scan_rows[0]["finished_at"] if scan_rows else None,
+            "age_seconds": (
+                round(time.time() - scan_rows[0]["finished_at"])
+                if scan_rows and scan_rows[0].get("finished_at") else None),
+            "note": (
+                "Needs at least two ok pulsed scans. Metrics: pct_high / "
+                "pct_low vs oldest pulse in the window; vol_spike = current "
+                "1h vol / median of prior pulses in the window."),
+        }
+
+    newest, oldest = scan_rows[0], scan_rows[-1]
+    by_scan = db.snapshots_for_scans([s["id"] for s in scan_rows])
+    now_map = by_scan.get(newest["id"]) or {}
+    then_map = by_scan.get(oldest["id"]) or {}
+
+    # Per-item volume series (newest-first scan order) for median spike.
+    vol_series = {}
+    for s in scan_rows:
+        for iid, snap in (by_scan.get(s["id"]) or {}).items():
+            vol = (snap.get("buy_vol_1h") or 0) + (snap.get("sell_vol_1h") or 0)
+            vol_series.setdefault(iid, []).append(vol)
+
+    names = db.item_names(list(now_map.keys()))
+    rows = []
+    for iid, now in now_map.items():
+        then = then_map.get(iid)
+        if not then:
+            continue
+        hi_now, hi_then = now.get("high"), then.get("high")
+        lo_now, lo_then = now.get("low"), then.get("low")
+        pct_high = None
+        pct_low = None
+        if hi_now and hi_then:
+            pct_high = round((hi_now - hi_then) / hi_then * 100, 2)
+        if lo_now and lo_then:
+            pct_low = round((lo_now - lo_then) / lo_then * 100, 2)
+
+        vols = vol_series.get(iid) or []
+        cur_vol = vols[0] if vols else 0
+        prior = vols[1:] if len(vols) > 1 else []
+        median_prior = None
+        vol_spike = None
+        if prior:
+            ordered = sorted(prior)
+            mid = len(ordered) // 2
+            median_prior = (
+                ordered[mid] if len(ordered) % 2
+                else (ordered[mid - 1] + ordered[mid]) / 2)
+            if median_prior and median_prior > 0:
+                vol_spike = round(cur_vol / median_prior, 2)
+
+        # Skip quiet no-ops: need a real price move or volume spike.
+        move = abs(pct_high or 0) + abs(pct_low or 0)
+        if move < 0.5 and (vol_spike is None or vol_spike < 1.5):
+            continue
+
+        rows.append({
+            "id": iid,
+            "name": names.get(iid) or f"Item {iid}",
+            "high": hi_now,
+            "low": lo_now,
+            "pct_high": pct_high,
+            "pct_low": pct_low,
+            "buy_vol_1h": now.get("buy_vol_1h"),
+            "sell_vol_1h": now.get("sell_vol_1h"),
+            "vol_1h": cur_vol,
+            "vol_median_prior": median_prior,
+            "vol_spike": vol_spike,
+            "score": round(
+                abs(pct_high or 0) * 0.5
+                + abs(pct_low or 0) * 0.3
+                + (vol_spike or 0) * 5, 2),
+        })
+    rows.sort(key=lambda r: r["score"], reverse=True)
+    rows = rows[:top]
+    updated = newest.get("finished_at")
+    return {
+        "rows": rows,
+        "window": window,
+        "scans_used": len(scan_rows),
+        "from_scan_id": oldest["id"],
+        "to_scan_id": newest["id"],
+        "updated_at": updated,
+        "age_seconds": round(time.time() - updated) if updated else None,
+        "note": (
+            "Pulse movers from item_snapshots — RuneLite trades, not guide "
+            "price. pct_* vs oldest pulse in window; vol_spike vs median of "
+            "prior pulses. Heuristic score, not backtested."),
+    }
+
+
 @app.get("/healthz")
 def healthz():
     """Liveness always answers; `ready` is false when the snapshot is missing,
@@ -327,7 +514,7 @@ def healthz():
 # ------------------------------------------------------------- frontend
 
 def _static_fingerprint() -> str:
-    """mtime fingerprint of shell/merch assets — changes on every deploy touch."""
+    """mtime fingerprint of shell + tool assets — changes on every deploy touch."""
     parts = []
     for rel in _STATIC_FINGERPRINT_FILES:
         path = os.path.join(STATIC_DIR, rel)
@@ -349,13 +536,23 @@ def _tool_html(name: str) -> HTMLResponse:
 
 @app.get("/")
 def index():
-    """Home redirects to the only live tool today; more tools join the drawer later."""
+    """Home redirects to Merch Desk until more tools are live."""
     return RedirectResponse("/merch", status_code=303)
 
 
 @app.get("/merch", response_class=HTMLResponse)
 def merch_desk():
     return _tool_html("merch")
+
+
+@app.get("/alch", response_class=HTMLResponse)
+def alch_desk():
+    return _tool_html("alch")
+
+
+@app.get("/movers", response_class=HTMLResponse)
+def movers_desk():
+    return _tool_html("movers")
 
 
 def main():

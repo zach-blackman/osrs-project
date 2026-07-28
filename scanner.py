@@ -182,6 +182,8 @@ def prefilter(bankroll, min_deploy_frac, max_spread_pct, stale_hours,
             "name": meta["name"],
             "limit": limit,
             "members": meta.get("members"),
+            "highalch": meta.get("highalch"),
+            "value": meta.get("value"),
             "high": high,
             "low": low,
             "margin": margin,
@@ -668,7 +670,7 @@ def scan_market_fast(cfg, history_fn, on_event=None):
     given item scores identically whichever path fetched its history from.
 
     Returns (meta, market_rows) like scan_market. meta also carries
-    "item_meta" (id/name/limit/members for every candidate, for db.upsert_items)
+    "item_meta" (id/name/limit/members/highalch/value for every candidate, for db.upsert_items)
     and "raw_snapshots" (id/high/low/buy_vol_1h/sell_vol_1h for every
     candidate — including thin-history ones excluded from market_rows — for
     db.insert_snapshots, which feeds the daily rollover)."""
@@ -741,7 +743,9 @@ def scan_market_fast(cfg, history_fn, on_event=None):
         "params": cfg.as_params(),
         "n_items": len(rows),
         "item_meta": [{"id": c["id"], "name": c["name"], "limit": c.get("limit"),
-                        "members": c.get("members")} for c in cands],
+                        "members": c.get("members"),
+                        "highalch": c.get("highalch"),
+                        "value": c.get("value")} for c in cands],
         "raw_snapshots": [{"id": c["id"], "high": c["high"], "low": c["low"],
                             "buy_vol_1h": c.get("buy_vol_1h"),
                             "sell_vol_1h": c.get("sell_vol_1h")} for c in cands],

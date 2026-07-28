@@ -250,11 +250,72 @@ def main():
             js = client.get("/static/js/shell.js")
             check(js.status_code == 200 and b"TOOLS" in js.content,
                   "/static/js/shell.js exposes TOOLS registry")
+            check(b'id: "alch"' in js.content and b'id: "movers"' in js.content,
+                  "shell.js registers Alch + Movers desks")
             check(b'btn.textContent' not in js.content,
                   "shell.js does not overwrite theme icons with Light/Dark text")
             mjs = client.get("/static/js/merch.js")
             check(mjs.status_code == 200 and b"renderCards" in mjs.content,
                   "merch.js includes mobile card render")
+
+            alch = client.get("/alch")
+            check(alch.status_code == 200 and b'data-tool="alch"' in alch.content,
+                  "/alch serves Alch Desk scaffold")
+            check(b"/static/js/alch.js?v=" in alch.content,
+                  "/alch cache-busts alch.js")
+            movers = client.get("/movers")
+            check(movers.status_code == 200 and b'data-tool="movers"' in movers.content,
+                  "/movers serves Movers Desk scaffold")
+            check(b"/static/js/movers.js?v=" in movers.content,
+                  "/movers cache-busts movers.js")
+            check(client.get("/static/js/tool-status.js").status_code == 200,
+                  "/static/js/tool-status.js is served")
+
+            print("\nalch + movers APIs")
+            # Seed highalch onto items from the merch picks so /api/alch can rank.
+            scan = db.latest_ok_scan()
+            pick_rows = db.read_picks(scan["id"])
+            now_ts = time.time()
+            db.upsert_items([
+                {"id": r["id"], "name": r["name"], "limit": r.get("limit"),
+                 "members": True, "highalch": int((r.get("buy_price") or 0) * 1.25),
+                 "value": int((r.get("buy_price") or 0) * 0.6)}
+                for r in pick_rows[:20] if r.get("buy_price")
+            ], now_ts)
+            alch_api = client.get("/api/alch?capital=700m&floor=100k&nature=100&top=10")
+            check(alch_api.status_code == 200, "/api/alch returns 200 with a snapshot")
+            alch_body = alch_api.json()
+            check("rows" in alch_body and "nature_cost" in alch_body and "note" in alch_body,
+                  "/api/alch has stable response shape")
+            check(alch_body["nature_cost"] == 100, "/api/alch uses nature=100")
+            if alch_body.get("rows"):
+                check(alch_body["rows"][0]["profit"] > 0,
+                      "/api/alch ranks positive high-alch profits")
+
+            # Two pulsed scans so /api/movers can compute Δ.
+            sid_a = db.write_snapshot(
+                {"started_at": now_ts - 1200, "finished_at": now_ts - 1200,
+                 "params": {}}, pick_rows[:5])
+            sid_b = db.write_snapshot(
+                {"started_at": now_ts - 600, "finished_at": now_ts - 600,
+                 "params": {}}, pick_rows[:5])
+            pulse_a = [{"id": r["id"], "high": r.get("sell_price"), "low": r.get("buy_price"),
+                        "buy_vol_1h": 10, "sell_vol_1h": 10} for r in pick_rows[:5]]
+            pulse_b = [{"id": r["id"],
+                        "high": int((r.get("sell_price") or 100) * 1.1),
+                        "low": int((r.get("buy_price") or 100) * 1.08),
+                        "buy_vol_1h": 80, "sell_vol_1h": 80} for r in pick_rows[:5]]
+            db.insert_snapshots(sid_a, pulse_a)
+            db.insert_snapshots(sid_b, pulse_b)
+            movers_api = client.get("/api/movers?window=6&top=10")
+            check(movers_api.status_code == 200, "/api/movers returns 200")
+            movers_body = movers_api.json()
+            check("rows" in movers_body and "scans_used" in movers_body
+                  and "note" in movers_body,
+                  "/api/movers has stable response shape")
+            check(movers_body["scans_used"] >= 2, "/api/movers sees ≥2 pulsed scans")
+            check(len(movers_body.get("rows") or []) >= 1,
+                  "/api/movers surfaces at least one mover")
 
             print("\nhealth")
             hr = client.get("/healthz")

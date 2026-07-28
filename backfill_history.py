@@ -50,7 +50,9 @@ def backfill(min_days=350, limit=None, sleep=None, verbose=True):
 
     now = time.time()
     db.upsert_items([{"id": m["id"], "name": m["name"], "limit": m.get("limit"),
-                       "members": m.get("members")} for m in tradeable], now)
+                       "members": m.get("members"),
+                       "highalch": m.get("highalch"),
+                       "value": m.get("value")} for m in tradeable], now)
 
     ids = [m["id"] for m in tradeable]
     depth = db.history_depth(ids)
