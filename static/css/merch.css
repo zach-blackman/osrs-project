@@ -123,8 +123,11 @@ button#refresh:disabled { opacity: .55; cursor: wait; }
   cursor: pointer; background: var(--surface); min-height: 28px;
 }
 #tablewrap { flex: 1 1 auto; overflow: auto; min-height: 0; }
-#cardwrap { display: none; flex: 1 1 auto; overflow: auto; min-height: 0; padding: 8px;
-  overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+#cardwrap {
+  display: none; flex: 1 1 0%; overflow: auto; min-height: 0; padding: 8px;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
 table { width: 100%; min-width: 100%; table-layout: fixed; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 thead th {
   position: sticky; top: 0; z-index: 2; background: var(--panel); text-align: left;
@@ -378,7 +381,12 @@ td.err { color: var(--loss); }
   #main { flex-direction: column; }
   #rail, #action { display: none !important; }
   #tablewrap, .foot { display: none !important; }
-  #cardwrap { display: block; }
+  /* Keep flex item sizing (1 1 0% + min-height:0) so overflow can scroll. */
+  #cardwrap {
+    display: block; flex: 1 1 0%; min-height: 0; overflow-y: auto;
+    overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
   .ax-sheet-close { display: inline-flex; align-items: center; }
   #detail-sheet-body #ax-content,
   #detail-sheet-body #ax-empty { flex: 1 1 auto; }

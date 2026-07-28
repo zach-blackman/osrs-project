@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import queue
+import re
 import secrets
 import time
 import urllib.parse
@@ -35,6 +36,23 @@ OPEN_PATHS = {"/login", "/healthz"}
 
 app = FastAPI(title="Clan Tools", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# HTML is no-cache; fingerprint CSS/JS so Cloudflare edge caches cannot keep
+# serving a pre-deploy shell.js that still did btn.textContent = "Light".
+_ASSET_REF = re.compile(r'((?:href|src)="/static/[^"?]+)(")')
+_STATIC_FINGERPRINT_FILES = (
+    "css/shell.css", "css/merch.css", "js/shell.js", "js/merch.js",
+)
+
+
+@app.middleware("http")
+async def _static_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        # Short edge TTL so deploys propagate even without a query-string bust.
+        response.headers.setdefault(
+            "Cache-Control", "public, max-age=120, must-revalidate")
+    return response
 
 
 # ---------------------------------------------------------------- auth
@@ -308,10 +326,25 @@ def healthz():
 
 # ------------------------------------------------------------- frontend
 
+def _static_fingerprint() -> str:
+    """mtime fingerprint of shell/merch assets — changes on every deploy touch."""
+    parts = []
+    for rel in _STATIC_FINGERPRINT_FILES:
+        path = os.path.join(STATIC_DIR, rel)
+        try:
+            parts.append(f"{rel}:{int(os.path.getmtime(path))}")
+        except OSError:
+            parts.append(f"{rel}:0")
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:10]
+
+
 def _tool_html(name: str) -> HTMLResponse:
     path = os.path.join(STATIC_DIR, "tools", f"{name}.html")
     with open(path, encoding="utf-8") as fh:
-        return HTMLResponse(fh.read())
+        html = fh.read()
+    v = _static_fingerprint()
+    html = _ASSET_REF.sub(rf"\1?v={v}\2", html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/")

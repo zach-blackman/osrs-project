@@ -236,12 +236,22 @@ def main():
             check(merch.status_code == 200 and b"Clan Tools" in merch.content,
                   "/merch returns Clan Tools shell")
             check(b"data-tool=\"merch\"" in merch.content, "/merch marks the merch tool")
+            check(b"/static/js/shell.js?v=" in merch.content,
+                  "/merch cache-busts shell.js so CDN cannot keep Light/Dark text")
+            check(b"theme-icon-sun" in merch.content and b"theme-icon-moon" in merch.content,
+                  "/merch theme toggle ships sun/moon icons")
             css = client.get("/static/css/shell.css")
             check(css.status_code == 200 and b"--accent" in css.content,
                   "/static/css/shell.css is served")
+            mcss = client.get("/static/css/merch.css")
+            check(mcss.status_code == 200 and b"min-height: 0" in mcss.content
+                  and b"#center" in mcss.content,
+                  "merch.css bounds #center for mobile card scroll")
             js = client.get("/static/js/shell.js")
             check(js.status_code == 200 and b"TOOLS" in js.content,
                   "/static/js/shell.js exposes TOOLS registry")
+            check(b'btn.textContent' not in js.content,
+                  "shell.js does not overwrite theme icons with Light/Dark text")
             mjs = client.get("/static/js/merch.js")
             check(mjs.status_code == 200 and b"renderCards" in mjs.content,
                   "merch.js includes mobile card render")
