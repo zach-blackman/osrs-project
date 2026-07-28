@@ -1,8 +1,9 @@
-# OSRS Merch Desk — clan app
+# OSRS Clan Tools — Merch Desk and friends
 
-Ranks Grand Exchange flip opportunities from the wiki's real-time prices.
-One shared scan serves the whole clan; each member's capital and price floor
-are applied instantly at read time, without touching the wiki again.
+Clan web app shell. Merch Desk ranks Grand Exchange flip opportunities from the
+wiki's real-time prices. One shared scan serves the whole clan; each member's
+capital and price floor are applied instantly at read time, without touching
+the wiki again. More tools plug into the same hamburger nav later.
 
 ```
   WRITER (only wiki caller)        DB (snapshots)           READER (stateless)
@@ -21,8 +22,11 @@ path remains available with `FAST_SCAN=0`.
 | `scanner.py` | Scanning core. `scan_market` / `scan_market_fast` are capital-agnostic; `rank_for` personalises a stored snapshot. |
 | `db.py` | Snapshots + Phase-2 `items` / `item_daily_history` / `item_snapshots`. SQLite locally, Postgres via `DATABASE_URL`. |
 | `worker.py` | Writer: APScheduler, single-flight, SSE fan-out, daily history rollover (+ timeseries gap-fill). |
-| `app.py` | FastAPI reader + login + Merch Desk UI. Makes zero wiki calls. |
-| `static/index.html` | Merch Desk UI (Emerald Ladder, dark default + light toggle). No framework. |
+| `app.py` | FastAPI reader + login + Clan Tools shell. Makes zero wiki calls. |
+| `static/tools/merch.html` | Merch Desk page (shell chrome + desk). |
+| `static/css/shell.css` / `static/js/shell.js` | Shared app shell (tokens, hamburger drawer, theme, `TOOLS` registry). |
+| `static/css/merch.css` / `static/js/merch.js` | Merch Desk styles and logic (desktop three-pane + mobile cards). |
+| `static/index.html` | Thin redirect stub; FastAPI `/` → `/merch`. |
 | `static/archive/index_classic.html` | Pre-redesign UI, archived. |
 | `config.py` | Every env var, read once. |
 | `analysis.py` | Deterministic dip/flip/risk heuristics over `rank_for` rows (also exposed on `/api/picks`). |
@@ -378,24 +382,38 @@ rows have them as `NULL` until the next scan runs.
 The wiki is only ever contacted by the writer, on a schedule, with the custom
 user agent and the existing retry/backoff. Readers never call it.
 
-## Frontend (static/index.html)
+## Frontend (Clan Tools shell)
 
-Merch Desk — Emerald Ladder palette (tracker-style olive dark + emerald accent),
-Source Sans 3 with tabular figures for columns, dark default with a light toggle
-(`merchdesk.theme`). Single vanilla-JS file, no framework.
+Vanilla HTML/JS, no framework. Emerald Ladder palette (olive dark + emerald
+accent), Source Sans 3, dark default with light toggle (`merchdesk.theme`).
 
-- **Layout** — filter rail · sortable table · item inspector. Capital/floor in
-  the top bar; ticker shows session highlights only (best gp/24h, avg score, top
-  pick). **Scan** starts a shared wiki refresh with a live progress panel.
+**Shell** — hamburger drawer lists tools from `ClanShell.TOOLS` in
+`static/js/shell.js`. Desktop and mobile share the same menu. `/` redirects to
+`/merch` (only live tool today). Theme + sign-out live in shell chrome.
+
+**Merch Desk** (`/merch`) — filter rail · sortable table · item inspector on
+desktop. Capital/floor in the top bar; ticker shows session highlights. **Scan**
+starts a shared wiki refresh with a live progress panel.
+
 - **Filters** — search (`/`), buy-dips/avoid, trend, score threshold,
   watchlist-only, column toggles. Client-side over `top=200`. Persisted in
   `localStorage` (`merchdesk.filters`).
-- **Analysis columns** — risk in the table; dip / flip / predicted trend in the
+- **Analysis** — risk in the table; dip / flip / predicted trend in the
   inspector (heuristic; see footer and `analysis_note`).
 - **Inspector** — qty execution calc, GE tax, signals, 30d chart, recent scan
   history, score breakdown, catalyst/reason when present, copy buy/sell, wiki,
-  local watchlist. Does not re-list buy/sell/margin (those stay in the table).
-- **Mobile** — panes stack below 860px; secondary columns hide.
+  local watchlist.
+- **Mobile (below 860px)** — card list; Filters and Cap/Floor/Scan in a compact bar;
+  detail and filters open as sheets. Tap targets ≥44px; safe-area insets.
+
+### Adding a future tool
+
+1. Add `{ id, href, label, status: "live"|"soon" }` to `TOOLS` in
+   `static/js/shell.js`.
+2. Create `static/tools/<id>.html` (copy merch’s shell chrome; put tool UI in
+   `#tool-slot`) plus optional `static/css/<id>.css` / `static/js/<id>.js`.
+3. Add `GET /<id>` in `app.py` via `_tool_html("<id>")` (same auth as `/merch`).
+4. Point `status: "soon"` entries at nothing until the route exists.
 
 ## Tests
 
@@ -422,13 +440,42 @@ Every margin, ROI and gp/24h figure is **net of the 2% GE sale tax** (capped at
 inaccuracy is in the conservative direction: tax-exempt items such as the Old
 school bond are taxed anyway, so their profit is understated.
 
-## Deploying (VPS + Cloudflare Tunnel)
+## Deploying
 
-Production target: a small always-on VPS running Docker Compose (`app` +
-Postgres + `cloudflared`). The public hostname
-**https://scan.wiseoldtools.com** stays on the existing Cloudflare Tunnel
-(`osrs-merch-scanner`); the VPS is the only origin. No public HTTP ports —
-firewall SSH only; the tunnel reaches `app:8777` on the Compose network.
+Production is a DigitalOcean droplet. Pushes to `main` deploy via
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+(SSH → `git pull` → `pip install` → restart systemd units).
+Public site: **https://scan.wiseoldtools.com**.
+
+### Access the server + venv
+
+```bash
+# SSH in (user is GitHub secret SERVER_USER; key is SSH_PRIVATE_KEY)
+ssh <SERVER_USER>@157.230.53.158
+
+cd /var/www/wiseoldtools/osrs-project
+
+# First-time venv (skip if venv/ already exists)
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Day-to-day: activate and work
+source venv/bin/activate
+
+# After code/dependency changes
+systemctl restart osrs-app
+systemctl restart osrs-scanner
+```
+
+Keep secrets in `/var/www/wiseoldtools/osrs-project/.env` (gitignored). Local
+dev still uses `.venv/`; the droplet uses `venv/` (both are ignored).
+
+### Alternate path: Docker Compose + Cloudflare Tunnel
+
+Older path: VPS running Docker Compose (`app` + Postgres + `cloudflared`).
+The tunnel hostname stays **https://scan.wiseoldtools.com**; firewall SSH
+only; the tunnel reaches `app:8777` on the Compose network.
 
 ### One-time VPS bootstrap
 

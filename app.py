@@ -19,6 +19,7 @@ import urllib.parse
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
                                StreamingResponse)
+from fastapi.staticfiles import StaticFiles
 
 import analysis
 import config
@@ -32,7 +33,8 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 COOKIE_NAME = "clan_session"
 OPEN_PATHS = {"/login", "/healthz"}
 
-app = FastAPI(title="OSRS Merch Desk", docs_url=None, redoc_url=None)
+app = FastAPI(title="Clan Tools", docs_url=None, redoc_url=None)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 # ---------------------------------------------------------------- auth
@@ -69,40 +71,45 @@ def _authed(request):
 
 @app.middleware("http")
 async def require_login(request: Request, call_next):
-    if config.CLAN_PASSWORD and request.url.path not in OPEN_PATHS \
+    path = request.url.path
+    if config.CLAN_PASSWORD and path not in OPEN_PATHS and not path.startswith("/static/") \
             and not _authed(request):
-        if request.url.path.startswith("/api/"):
+        if path.startswith("/api/"):
             return JSONResponse({"error": "not signed in"}, status_code=401)
         return RedirectResponse("/login", status_code=303)
     return await call_next(request)
 
 
-LOGIN_PAGE = """<!doctype html><html lang="en"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Merch Desk — sign in</title>
+LOGIN_PAGE = """<!doctype html><html lang="en" data-theme="dark"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Clan Tools — sign in</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#EEF2F6;--panel:#FFFFFF;--ink:#1B2838;--muted:#4B6274;--line:#C8D4E0;--accent:#1A9FFF;--surface:#FFFFFF}
+:root{--bg:#0F1412;--panel:#16201C;--ink:#E6EDEA;--muted:#8FA399;--faint:#6B7F74;
+      --line:#24332C;--accent:#2FBF71;--surface:#121A16;--scan-fg:#0F1412;
+      --sans:"Source Sans 3","Helvetica Neue",sans-serif}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);
-     color:var(--ink);font:15px/1.5 "IBM Plex Sans",Helvetica Neue,sans-serif}
+body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;
+     background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);
+     padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right))
+             max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
 form{background:var(--panel);border:1px solid var(--line);padding:28px 26px;width:min(360px,92vw)}
-h1{margin:0 0 4px;font:700 1.45rem/1.2 "IBM Plex Sans",Helvetica Neue,sans-serif;letter-spacing:-.02em}
+h1{margin:0 0 4px;font:700 1.45rem/1.2 var(--sans);letter-spacing:-.02em}
 h1 em{font-style:normal;color:var(--accent)}
 p{margin:0 0 18px;color:var(--muted);font-size:13.5px}
-input{width:100%;font:inherit;padding:10px 12px;border-radius:2px;
+input{width:100%;font:inherit;padding:12px;min-height:44px;border-radius:2px;
       background:var(--surface);border:1px solid var(--line);color:var(--ink);outline:none}
 input:focus{border-color:var(--accent)}
 button{width:100%;margin-top:12px;font:inherit;font-weight:600;cursor:pointer;
-       padding:10px;border:0;border-radius:2px;color:#fff;background:var(--accent)}
-button:hover{filter:brightness(1.05)}
-.err{color:#B33A3A;font-size:13px;margin-top:10px}
+       padding:12px;min-height:44px;border:0;border-radius:2px;color:var(--scan-fg);background:var(--accent)}
+button:hover{filter:brightness(1.06)}
+.err{color:#E06A6A;font-size:13px;margin-top:10px}
 </style>
 <form method="post" action="/login">
-  <h1>Merch <em>Desk</em></h1>
-  <p>Clan members only. Shared snapshot, your capital.</p>
+  <h1>Clan <em>Tools</em></h1>
+  <p>Clan members only. Shared snapshot tools — start with Merch Desk.</p>
   <input type="password" name="password" placeholder="Clan password" autofocus autocomplete="current-password">
   <button type="submit">Sign in</button>
   %s
@@ -122,7 +129,7 @@ async def login_submit(request: Request):
     password = urllib.parse.parse_qs(body).get("password", [""])[0]
     if not _password_ok(password):
         return RedirectResponse("/login?bad=1", status_code=303)
-    resp = RedirectResponse("/", status_code=303)
+    resp = RedirectResponse("/merch", status_code=303)
     resp.set_cookie(
         COOKIE_NAME, _token(), max_age=60 * 60 * 24 * 30,
         httponly=True, samesite="lax", secure=config.SECURE_COOKIES)
@@ -301,10 +308,21 @@ def healthz():
 
 # ------------------------------------------------------------- frontend
 
-@app.get("/", response_class=HTMLResponse)
-def index():
-    with open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8") as fh:
+def _tool_html(name: str) -> HTMLResponse:
+    path = os.path.join(STATIC_DIR, "tools", f"{name}.html")
+    with open(path, encoding="utf-8") as fh:
         return HTMLResponse(fh.read())
+
+
+@app.get("/")
+def index():
+    """Home redirects to the only live tool today; more tools join the drawer later."""
+    return RedirectResponse("/merch", status_code=303)
+
+
+@app.get("/merch", response_class=HTMLResponse)
+def merch_desk():
+    return _tool_html("merch")
 
 
 def main():
