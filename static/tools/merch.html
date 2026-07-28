@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Merch Desk — Clan Tools</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/shell.css">
+<link rel="stylesheet" href="/static/css/merch.css">
+</head>
+<body class="shell-body" data-tool="merch">
+
+  <div id="nav-backdrop" aria-hidden="true"></div>
+  <aside id="nav-drawer" aria-hidden="true" aria-label="Tools">
+    <div class="nav-drawer-head">
+      <span class="title">Clan Tools</span>
+      <button type="button" class="nav-drawer-close" id="nav-drawer-close" aria-label="Close menu">&times;</button>
+    </div>
+    <ul class="nav-tools" id="nav-tools"></ul>
+    <div class="nav-drawer-foot">Shared clan snapshot tools. Merch Desk ranks GE flips from the wiki feed.</div>
+  </aside>
+
+  <header id="shell-top">
+    <button type="button" id="nav-toggle" aria-label="Open tools menu" title="Tools">
+      <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
+    </button>
+    <div class="shell-brand">
+      <div class="name">Clan <em>Tools</em></div>
+      <div class="sub">Merch Desk · net of GE tax</div>
+    </div>
+    <div id="tool-chrome">
+      <div id="cmdwrap">
+        <span class="hint">Search</span>
+        <input id="cmd" type="text" placeholder="item name, or /cap 700m  /floor 500k  /refresh  /reset" autocomplete="off" spellcheck="false">
+        <span class="kbd">/</span>
+      </div>
+      <div id="capbox">
+        <label for="capital">Cap</label><input id="capital" type="text" value="700m" spellcheck="false" autocomplete="off" title="liquid capital">
+        <label for="floor">Floor</label><input id="floor" type="text" value="500k" spellcheck="false" autocomplete="off" title="ignore items below this price">
+      </div>
+      <div id="statusline"><span class="lamp" id="lamp" aria-hidden="true"></span><span id="status">loading…</span></div>
+      <button id="refresh" type="button">Scan</button>
+    </div>
+    <div class="shell-actions">
+      <button id="theme-toggle" type="button" title="Toggle light / dark" aria-label="Toggle color theme">Light</button>
+      <form method="post" action="/logout" class="shell-logout-form"><button id="logout" type="submit">Sign out</button></form>
+    </div>
+  </header>
+
+  <div id="tool-slot">
+    <div id="mobile-bar">
+      <button type="button" class="mbtn" id="mobile-filters">Filters</button>
+      <button type="button" class="mbtn" id="mobile-scan">Scan</button>
+      <label class="mfield">Cap <input id="mobile-capital" type="text" inputmode="text" autocomplete="off" spellcheck="false"></label>
+      <label class="mfield">Floor <input id="mobile-floor" type="text" inputmode="text" autocomplete="off" spellcheck="false"></label>
+      <div class="mstatus" id="mobile-status">loading…</div>
+    </div>
+
+    <div id="ticker"></div>
+
+    <div id="main">
+      <div id="rail">
+        <div class="rail-sec">
+          <div class="rail-title">Mode</div>
+          <div class="vseg" id="fb-mode">
+            <button class="on" data-mode="any" type="button">Any</button>
+            <button data-mode="buy" type="button">Buy dips</button>
+            <button data-mode="avoid" type="button">Avoid</button>
+          </div>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-title">Trend</div>
+          <div class="vchip-row" id="trend-chips">
+            <span class="vchip t-rising" data-trend="rising">Rising <span class="n"></span></span>
+            <span class="vchip t-bounce" data-trend="bounce">Bounce <span class="n"></span></span>
+            <span class="vchip t-flat" data-trend="flat">Flat <span class="n"></span></span>
+            <span class="vchip t-falling" data-trend="falling">Falling <span class="n"></span></span>
+          </div>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-title">Thresholds</div>
+          <div class="rail-slider">
+            <div class="row"><span>score ≥</span><b id="fb-score-v">0</b></div>
+            <input id="fb-score" type="range" min="0" max="100" step="5" value="0">
+          </div>
+        </div>
+        <div class="rail-sec">
+          <label class="rail-toggle"><input id="fb-watch" type="checkbox"> Watchlist only</label>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-title">Columns</div>
+          <div class="rail-cols" id="cols-pop"></div>
+        </div>
+        <div class="rail-sec">
+          <span class="rail-reset" id="fb-reset">Reset filters</span>
+        </div>
+      </div>
+
+      <div id="center">
+        <div id="summary-row"></div>
+        <div id="tablewrap">
+          <table>
+            <thead id="thead-row">
+              <tr>
+                <th data-k="rank" class="num">#</th>
+                <th data-k="name">Item</th>
+                <th data-k="buy_price" class="num">Buy@</th>
+                <th data-k="sell_price" class="num">Sell@</th>
+                <th data-k="margin" class="num">Margin</th>
+                <th data-k="roi" class="num">ROI</th>
+                <th data-k="limit" class="num" data-col="limit">Limit/4h</th>
+                <th data-k="gp_24h" class="num">Gp/24h</th>
+                <th data-k="vol_day" class="num" data-col="vol_day">Vol/day</th>
+                <th data-k="trend">Trend</th>
+                <th class="nosort" data-col="spark">30d</th>
+                <th data-k="merch_score" class="num score-col">Score</th>
+                <th data-k="risk_level" data-col="risk_level">Risk</th>
+              </tr>
+            </thead>
+            <tbody id="rows">
+              <tr><td colspan="13" class="empty">loading the latest snapshot…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="cardwrap">
+          <div class="cards-empty">loading the latest snapshot…</div>
+        </div>
+        <div class="foot">
+          <b>Buy@</b> = insta-sell (place buy here) · <b>Sell@</b> = insta-buy · margins net 2% GE tax.
+          RuneLite trades, not guide price. Heuristics aren’t backtested.
+          <b>j/k</b> browse · <b>/</b> search · Cap/Floor re-rank instantly — only Scan hits the wiki.
+        </div>
+      </div>
+
+      <div id="action">
+        <div class="ax-empty" id="ax-empty">
+          Select an item to inspect<br><br>
+          <span class="k">click a row</span> · <span class="k">j</span> next · <span class="k">k</span> prev
+        </div>
+        <div id="ax-content" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sheet-backdrop" aria-hidden="true"></div>
+  <div id="filter-sheet" class="sheet" role="dialog" aria-label="Filters">
+    <div class="sheet-head">
+      <span class="title">Filters</span>
+      <button type="button" class="sheet-close" id="filter-sheet-close" aria-label="Close filters">&times;</button>
+    </div>
+    <div id="filter-sheet-body"></div>
+  </div>
+  <div id="detail-sheet" class="sheet" role="dialog" aria-label="Item detail">
+    <div class="sheet-head">
+      <span class="title">Item</span>
+      <button type="button" class="sheet-close" id="detail-sheet-close" aria-label="Close detail">&times;</button>
+    </div>
+    <div id="detail-sheet-body"></div>
+  </div>
+
+  <div id="overlay">
+    <div class="console">
+      <div class="con-head">
+        <span class="con-title">Live scan — <span id="con-phase">starting…</span></span>
+        <span class="con-pct" id="con-pct"></span>
+        <button class="con-close" id="con-close" type="button">Hide</button>
+      </div>
+      <div class="con-progress indet" id="con-progress"><i id="con-bar"></i></div>
+      <div class="con-log" id="con-log"></div>
+    </div>
+  </div>
+
+<script src="/static/js/shell.js"></script>
+<script src="/static/js/merch.js"></script>
+</body>
+</html>

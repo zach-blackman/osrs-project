@@ -205,6 +205,8 @@ def main():
                       "API refuses an unauthenticated read")
                 check(bare.get("/", follow_redirects=False).status_code == 303,
                       "page redirects to the login form")
+                check(bare.get("/merch", follow_redirects=False).status_code == 303,
+                      "/merch redirects to the login form")
                 hz = bare.get("/healthz")
                 check(hz.status_code in (200, 503),
                       "/healthz stays reachable without auth")
@@ -217,10 +219,32 @@ def main():
                                  follow_redirects=False)
                 check(web.COOKIE_NAME in good.cookies,
                       "correct password sets a session cookie")
+                check(good.headers.get("location") == "/merch",
+                      "login lands on /merch")
                 check(bare.get("/api/picks").status_code == 200,
                       "signed-in read works")
+                check(bare.get("/merch").status_code == 200,
+                      "signed-in /merch serves the desk")
             finally:
                 config.CLAN_PASSWORD = ""
+
+            print("\nshell routes + static assets")
+            root = client.get("/", follow_redirects=False)
+            check(root.status_code == 303 and root.headers.get("location") == "/merch",
+                  "/ redirects to /merch")
+            merch = client.get("/merch")
+            check(merch.status_code == 200 and b"Clan Tools" in merch.content,
+                  "/merch returns Clan Tools shell")
+            check(b"data-tool=\"merch\"" in merch.content, "/merch marks the merch tool")
+            css = client.get("/static/css/shell.css")
+            check(css.status_code == 200 and b"--accent" in css.content,
+                  "/static/css/shell.css is served")
+            js = client.get("/static/js/shell.js")
+            check(js.status_code == 200 and b"TOOLS" in js.content,
+                  "/static/js/shell.js exposes TOOLS registry")
+            mjs = client.get("/static/js/merch.js")
+            check(mjs.status_code == 200 and b"renderCards" in mjs.content,
+                  "merch.js includes mobile card render")
 
             print("\nhealth")
             hr = client.get("/healthz")
