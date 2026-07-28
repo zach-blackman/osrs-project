@@ -63,6 +63,8 @@ ROLE = os.environ.get("ROLE", "all").strip().lower() or "all"
 # Defaults the UI starts with; each user overrides them at read time.
 DEFAULT_CAPITAL = _int("DEFAULT_CAPITAL", 700_000_000)
 DEFAULT_FLOOR = _int("DEFAULT_FLOOR", 500_000)
+# Alch Desk: nature-rune cost when the client does not pass nature=.
+DEFAULT_NATURE_COST = _int("DEFAULT_NATURE_COST", 100)
 
 # Auth. Unset means the app is open — fine on localhost, not on the internet.
 CLAN_PASSWORD = os.environ.get("CLAN_PASSWORD", "").strip()

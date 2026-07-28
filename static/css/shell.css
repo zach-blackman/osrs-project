@@ -77,6 +77,16 @@ a { color: var(--accent); }
 #tool-chrome {
   flex: 1 1 auto; display: flex; align-items: stretch; min-width: 0; height: 100%;
 }
+#tool-chrome #statusline {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+  color: var(--muted); font-size: 12px; white-space: nowrap;
+  height: 100%;
+}
+#tool-chrome #statusline .lamp {
+  width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--faint);
+}
+#tool-chrome #statusline .lamp.live { background: var(--gain); }
+#tool-chrome #statusline .lamp.busy { background: var(--amb); }
 .shell-actions {
   display: flex; align-items: stretch; flex: 0 0 auto; height: 100%;
 }

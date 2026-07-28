@@ -78,6 +78,8 @@ items = sa.Table(
     sa.Column("name", sa.String(128), nullable=False),
     sa.Column("buy_limit", sa.Integer),
     sa.Column("members", sa.Boolean),
+    sa.Column("highalch", sa.Integer),          # wiki /mapping highalch
+    sa.Column("value", sa.Integer),             # wiki store value
     sa.Column("first_seen", sa.Float, nullable=False),
     sa.Column("last_seen", sa.Float, nullable=False),
 )
@@ -142,17 +144,24 @@ def engine():
 
 def _migrate_missing_columns(eng):
     """create_all only creates missing TABLES, not missing COLUMNS on tables
-    that already exist. buy_vol_1h/sell_vol_1h were added after the initial
-    schema, so backfill them onto any pre-existing `picks` table."""
+    that already exist. New columns are added here so existing DBs upgrade
+    without a wipe."""
     inspector = sa.inspect(eng)
-    if "picks" not in inspector.get_table_names():
-        return
-    existing = {c["name"] for c in inspector.get_columns("picks")}
+    tables = inspector.get_table_names()
+    migrations = (
+        ("picks", picks, ("buy_vol_1h", "sell_vol_1h")),
+        ("items", items, ("highalch", "value")),
+    )
     with eng.begin() as cx:
-        for col in picks.columns:
-            if col.name not in existing and col.name in ("buy_vol_1h", "sell_vol_1h"):
-                coltype = col.type.compile(eng.dialect)
-                cx.exec_driver_sql(f"ALTER TABLE picks ADD COLUMN {col.name} {coltype}")
+        for table_name, table, allowed in migrations:
+            if table_name not in tables:
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table_name)}
+            for col in table.columns:
+                if col.name not in existing and col.name in allowed:
+                    coltype = col.type.compile(eng.dialect)
+                    cx.exec_driver_sql(
+                        f"ALTER TABLE {table_name} ADD COLUMN {col.name} {coltype}")
 
 
 def init_db():
@@ -284,8 +293,9 @@ def prune(keep=None):
 # ---------------------------------------------------- phase-2: items table
 
 def upsert_items(item_rows, ts):
-    """Insert never-seen items; refresh name/limit/members and bump last_seen
-    on every item that showed up this cycle. `item_rows`: id/name/limit/members."""
+    """Insert never-seen items; refresh name/limit/members/highalch/value and
+    bump last_seen on every item that showed up this cycle.
+    `item_rows`: id/name/limit/members[/highalch/value]."""
     if not item_rows:
         return
     ids = [r["id"] for r in item_rows]
@@ -297,18 +307,26 @@ def upsert_items(item_rows, ts):
                 sa.select(items.c.item_id).where(items.c.item_id.in_(chunk))))
         new_rows = [{"item_id": r["id"], "name": r["name"],
                      "buy_limit": r.get("limit"), "members": r.get("members"),
+                     "highalch": r.get("highalch"), "value": r.get("value"),
                      "first_seen": ts, "last_seen": ts}
                     for r in item_rows if r["id"] not in existing]
         if new_rows:
             cx.execute(sa.insert(items), new_rows)
         for iid in existing:
             r = by_id[iid]
-            cx.execute(sa.update(items).where(items.c.item_id == iid).values(
-                name=r["name"],
-                buy_limit=r.get("limit"),
-                members=r.get("members"),
-                last_seen=ts,
-            ))
+            values = {
+                "name": r["name"],
+                "buy_limit": r.get("limit"),
+                "members": r.get("members"),
+                "last_seen": ts,
+            }
+            # Only overwrite alch/value when the writer supplied them — older
+            # callers (and partial rows) must not wipe known mapping data.
+            if "highalch" in r:
+                values["highalch"] = r.get("highalch")
+            if "value" in r:
+                values["value"] = r.get("value")
+            cx.execute(sa.update(items).where(items.c.item_id == iid).values(**values))
 
 
 # ------------------------------------------- phase-2: daily history (long-lived)
@@ -464,3 +482,77 @@ def prune_snapshots(keep_days=None):
                                  .where(item_snapshots.c.scan_id.in_(chunk)))
             deleted += result.rowcount or 0
     return deleted
+
+
+# ---------------------------------------------------- Alch / Movers desks
+
+def items_with_alch(item_ids=None):
+    """{item_id: {name, buy_limit, members, highalch, value}} for items that
+    have a known highalch. Optional item_ids filter (chunked)."""
+    out = {}
+    with engine().connect() as cx:
+        if item_ids is None:
+            stmt = sa.select(items).where(items.c.highalch.isnot(None))
+            rows = cx.execute(stmt).mappings()
+            for r in rows:
+                out[r["item_id"]] = dict(r)
+            return out
+        for chunk in _chunked(item_ids):
+            stmt = (sa.select(items)
+                    .where(items.c.item_id.in_(chunk),
+                           items.c.highalch.isnot(None)))
+            for r in cx.execute(stmt).mappings():
+                out[r["item_id"]] = dict(r)
+    return out
+
+
+def latest_snapshot_prices():
+    """Latest ok scan's item_snapshots as {item_id: {high, low, buy_vol_1h,
+    sell_vol_1h, scan_id, finished_at}}. Empty dict when no pulse exists."""
+    scan = latest_ok_scan()
+    if not scan:
+        return {}, None
+    stmt = sa.select(item_snapshots).where(item_snapshots.c.scan_id == scan["id"])
+    with engine().connect() as cx:
+        rows = {r["item_id"]: dict(r) for r in cx.execute(stmt).mappings()}
+    return rows, scan
+
+
+def recent_ok_scan_ids(limit=12):
+    """Newest-first ok scan ids that have at least one item_snapshots row."""
+    limit = max(1, min(int(limit), 50))
+    subq = (sa.select(item_snapshots.c.scan_id)
+            .group_by(item_snapshots.c.scan_id)
+            .subquery())
+    stmt = (sa.select(scans.c.id, scans.c.finished_at)
+            .where(scans.c.status == "ok",
+                   scans.c.id.in_(sa.select(subq.c.scan_id)))
+            .order_by(scans.c.finished_at.desc())
+            .limit(limit))
+    with engine().connect() as cx:
+        return [dict(r) for r in cx.execute(stmt).mappings()]
+
+
+def snapshots_for_scans(scan_ids):
+    """{scan_id: {item_id: snapshot_row}} for the given scan ids."""
+    if not scan_ids:
+        return {}
+    out = {sid: {} for sid in scan_ids}
+    with engine().connect() as cx:
+        for chunk in _chunked(scan_ids):
+            stmt = sa.select(item_snapshots).where(
+                item_snapshots.c.scan_id.in_(chunk))
+            for r in cx.execute(stmt).mappings():
+                out[r["scan_id"]][r["item_id"]] = dict(r)
+    return out
+
+
+def item_names(item_ids):
+    """{item_id: name} for the given ids."""
+    out = {}
+    with engine().connect() as cx:
+        for chunk in _chunked(item_ids):
+            stmt = sa.select(items.c.item_id, items.c.name).where(
+                items.c.item_id.in_(chunk))
+            out.update({r.item_id: r.name for r in cx.execute(stmt)})
+    return out

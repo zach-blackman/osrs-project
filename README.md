@@ -1,11 +1,13 @@
 # Clan Tools — Merch Desk
 
-Clan web app for OSRS helpers. Today the only live tool is **Merch Desk**, which
+Clan web app for OSRS helpers. Today the live tool is **Merch Desk**, which
 ranks Grand Exchange flip opportunities from the wiki’s real-time prices.
 One shared scan serves the whole clan; each member’s capital and price floor
 are applied instantly at read time — the UI never calls the wiki.
 
-More tools plug into the same hamburger shell later (`ClanShell.TOOLS`).
+**Alch Desk** and **Movers Desk** are scaffolded in the same shell (`soon` in
+the drawer; routes + APIs already wired). More tools plug in via
+`ClanShell.TOOLS`.
 
 ```
   WRITER (only wiki caller)        DB (snapshots)           READER (stateless)
@@ -34,8 +36,13 @@ Public site: **https://scan.wiseoldtools.com**
 | `backfill_history.py` | One-time resumable `/timeseries` → `item_daily_history` backfill. |
 | `predict_cli.py` | Terminal client for the prediction layer (same DB as the UI). |
 | `static/tools/merch.html` | Merch Desk page (shell chrome + desk body). |
+| `static/tools/alch.html` | Alch Desk scaffold. |
+| `static/tools/movers.html` | Movers Desk scaffold. |
 | `static/css/shell.css`, `static/js/shell.js` | Shared Clan Tools shell: drawer, theme, `TOOLS` registry. |
+| `static/js/tool-status.js` | Shared snapshot-age lamp for every desk. |
 | `static/css/merch.css`, `static/js/merch.js` | Merch Desk UI (desktop three-pane + mobile cards/sheets). |
+| `static/css/alch.css`, `static/js/alch.js` | Alch Desk stub UI. |
+| `static/css/movers.css`, `static/js/movers.js` | Movers Desk stub UI. |
 | `static/archive/` | Older UIs, not mounted as routes. |
 | `osrs_merch_scan.py` | Original standalone CLI/GUI (parity / history only). |
 
@@ -72,13 +79,15 @@ requires a password — the process refuses to start otherwise.
 |---|---|
 | `/` | Redirects to `/merch`. |
 | `/merch` | Merch Desk (Clan Tools shell + desk). |
+| `/alch` | Alch Desk scaffold (high-alch profits). |
+| `/movers` | Movers Desk scaffold (pulse movers). |
 | `/login`, `/logout` | Shared clan-password cookie session. |
 | `/static/...` | CSS/JS and other static assets. |
 | `/healthz` | Open (no auth). Ready only when a fresh ok snapshot exists. |
 
 **Shell** — hamburger drawer lists tools from `TOOLS` in `static/js/shell.js`.
-Sun/moon theme toggle (`merchdesk.theme`). Emerald Ladder palette (dark
-default).
+Live tools are links; `status: "soon"` shows a disabled badge. Sun/moon theme
+toggle (`merchdesk.theme`). Emerald Ladder palette (dark default).
 
 **Merch Desk (desktop)** — filter rail · sortable table · item inspector.
 Cap/Floor and Scan in the top chrome; ticker shows session highlights.
@@ -90,12 +99,30 @@ compact bar; filters and item detail open as sheets. Nested `#cardwrap` scroll
 Prefs live in `localStorage` (`merch.capital`, `merch.floor`,
 `merchdesk.filters`, `merchdesk.watch`, `merchdesk.theme`).
 
-### Adding another tool later
+### Tool convention
 
-1. Add `{ id, href, label, status: "live"|"soon" }` to `TOOLS` in `shell.js`.
-2. Add `static/tools/<id>.html` (+ optional CSS/JS) with the same shell chrome.
-3. Add `GET /<id>` in `app.py` via `_tool_html("<id>")`.
+Each Clan Tool follows the same shape:
 
+1. Registry: `{ id, href, label, status: "live"|"soon" }` in `static/js/shell.js`.
+2. Page: `static/tools/<id>.html` with shell chrome (`data-tool="<id>"`) plus
+   optional `static/css/<id>.css` and `static/js/<id>.js`. Add those paths to
+   `_STATIC_FINGERPRINT_FILES` in `app.py` so deploys bust CDN caches.
+3. Route: `GET /<id>` in `app.py` via `_tool_html("<id>")`.
+4. API (optional): `/api/<id>/…` on the reader — never call the wiki from the UI.
+5. Writer hook (optional): enrich shared tables during the existing scan cycle
+   (e.g. `items.highalch` from `/mapping`). No second wiki poller.
+
+Shared snapshot age lamp: `static/js/tool-status.js` (`ClanToolStatus.refresh`).
+
+### Upcoming desks
+
+| Desk | Question | API | Data |
+|---|---|---|---|
+| **Alch Desk** | What is profitable to high-alch? | `GET /api/alch?capital=&floor=&nature=&top=` | `items.highalch` + latest pulse / picks |
+| **Movers Desk** | What just moved or spiked in volume? | `GET /api/movers?window=&top=` | `item_snapshots` pulse only |
+
+Both stay `soon` in the drawer until their full UIs ship; routes and APIs work
+for local development now.
 ---
 
 ## Configuration
@@ -121,6 +148,7 @@ All optional; defaults suit a local single-instance run. Gp values accept
 | `SHORTLIST` | `300` | **Legacy only** (`FAST_SCAN=0`): per-item `/timeseries` budget. |
 | `SLEEP` | `0.6` | Per-item delay (legacy enrich + history gap-fill). |
 | `DEFAULT_CAPITAL` / `DEFAULT_FLOOR` | `700m` / `500k` | UI starting Cap/Floor. |
+| `DEFAULT_NATURE_COST` | `100` | Alch Desk nature-rune cost when `nature=` omitted. |
 | `CLAN_PASSWORD` | *(unset)* | Unset = open on loopback. Required off-loopback. |
 | `SECRET_KEY` | derived from password | Set to keep sessions across password changes. |
 | `SECURE_COOKIES` | auto | On when `HOST` is not loopback. |
@@ -243,6 +271,8 @@ Needs at least one ok snapshot in the DB. The same fields appear on
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/picks?capital=&floor=&top=&mode=` | Personalised ranking + analysis fields. `503` until first ok scan. |
+| `GET /api/alch?capital=&floor=&nature=&top=` | High-alch profit ranking (mapping `highalch` − buy − nature). |
+| `GET /api/movers?window=&top=` | Pulse movers: `%Δ` high/low + 1h volume spike vs recent median. |
 | `GET /api/status` | Snapshot age, next run, scanning flag, readiness hints. |
 | `POST /api/refresh` | Trigger shared scan. Single-flight; debounce → **429**. |
 | `GET /api/refresh/stream` | SSE `phase` / `log` / `progress` / `result`. |
