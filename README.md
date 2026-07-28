@@ -389,7 +389,7 @@ accent), Source Sans 3, dark default with light toggle (`merchdesk.theme`).
 
 **Shell** — hamburger drawer lists tools from `ClanShell.TOOLS` in
 `static/js/shell.js`. Desktop and mobile share the same menu. `/` redirects to
-`/merch` (only live tool today). Theme + sign-out live in shell chrome.
+`/merch` (only live tool today). Theme toggle (sun/moon) lives in shell chrome.
 
 **Merch Desk** (`/merch`) — filter rail · sortable table · item inspector on
 desktop. Capital/floor in the top bar; ticker shows session highlights. **Scan**
