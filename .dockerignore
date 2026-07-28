@@ -1,0 +1,15 @@
+.venv
+__pycache__
+*.pyc
+.git
+.lavish
+.claude
+*.db
+*.db-wal
+*.db-shm
+osrs_scanner.db*
+.env
+MIGRATION_PLAN.md
+MIGRATION_PLAN_V2.md
+tests
+static/archive

@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-merch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-merch}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-merch} -d ${POSTGRES_DB:-merch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-merch}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-merch}
+      HOST: "0.0.0.0"
+      PORT: "8777"
+      ROLE: all
+      CLAN_PASSWORD: ${CLAN_PASSWORD:?set CLAN_PASSWORD in .env}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      UA: ${UA:-merch-scanner - nekrosisx}
+      FAST_SCAN: ${FAST_SCAN:-1}
+      SCAN_INTERVAL_MIN: ${SCAN_INTERVAL_MIN:-10}
+      SCAN_ON_STARTUP: ${SCAN_ON_STARTUP:-0}
+      REFERENCE_BANKROLL: ${REFERENCE_BANKROLL:-50m}
+      GLOBAL_FLOOR: ${GLOBAL_FLOOR:-100k}
+      DEFAULT_CAPITAL: ${DEFAULT_CAPITAL:-700m}
+      DEFAULT_FLOOR: ${DEFAULT_FLOOR:-500k}
+    # Bound to loopback only — Cloudflare Tunnel reaches it via the Compose network.
+    # Direct host access for debugging: curl http://127.0.0.1:8777/healthz
+    ports:
+      - "127.0.0.1:8777:8777"
+    healthcheck:
+      # /healthz returns 503 when the snapshot is stale; still treat process as live.
+      test: ["CMD-SHELL", "curl -sS http://127.0.0.1:8777/healthz | grep -q '\"ok\":true'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - app
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./deploy/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./deploy/cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    profiles:
+      - tunnel
+
+volumes:
+  pgdata:

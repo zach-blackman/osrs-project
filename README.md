@@ -1,48 +1,54 @@
-# OSRS Merch Scanner — clan app
+# OSRS Merch Desk — clan app
 
-Ranks the top Grand Exchange flip opportunities from the wiki's real-time
-prices. One shared scan serves the whole clan; each member's capital and price
-floor are applied instantly at read time, without touching the wiki again.
+Ranks Grand Exchange flip opportunities from the wiki's real-time prices.
+One shared scan serves the whole clan; each member's capital and price floor
+are applied instantly at read time, without touching the wiki again.
 
 ```
   WRITER (only wiki caller)        DB (snapshots)           READER (stateless)
-  scan_market() every 10 min  ─▶  scans + picks tables  ─▶  GET /api/picks?capital=&floor=
-  + on-demand (single-flight)                               personalised per request
+  scan every 10 min (FAST_SCAN) ─▶ scans + picks + history ─▶ GET /api/picks?capital=&floor=
+  + on-demand (single-flight)                               personalised + analysis per request
 ```
+
+Default scan path is **FAST_SCAN**: three bulk wiki calls + DB-backed daily
+history (run `backfill_history.py` once first). Legacy shortlist+`/timeseries`
+path remains available with `FAST_SCAN=0`.
 
 ## Files
 
 | File | Role |
 |---|---|
-| `scanner.py` | The scanning core. `scan_market()` is capital-agnostic and expensive; `rank_for()` personalises a stored snapshot and is free. |
-| `db.py` | Snapshot storage over SQLAlchemy Core — SQLite locally, Postgres by changing `DATABASE_URL`. |
-| `worker.py` | The writer: APScheduler interval job, single-flight locking, SSE fan-out. |
-| `app.py` | FastAPI reader + login + static page. Makes zero wiki calls. |
-| `static/index.html` | The original UI, rewired to the API. No framework. |
+| `scanner.py` | Scanning core. `scan_market` / `scan_market_fast` are capital-agnostic; `rank_for` personalises a stored snapshot. |
+| `db.py` | Snapshots + Phase-2 `items` / `item_daily_history` / `item_snapshots`. SQLite locally, Postgres via `DATABASE_URL`. |
+| `worker.py` | Writer: APScheduler, single-flight, SSE fan-out, daily history rollover (+ timeseries gap-fill). |
+| `app.py` | FastAPI reader + login + Merch Desk UI. Makes zero wiki calls. |
+| `static/index.html` | Merch Desk UI (Emerald Ladder, dark default + light toggle). No framework. |
+| `static/archive/index_classic.html` | Pre-redesign UI, archived. |
 | `config.py` | Every env var, read once. |
-| `osrs_merch_scan.py` | The original standalone CLI/GUI tool. Still works, unchanged in behaviour. |
+| `analysis.py` | Deterministic dip/flip/risk heuristics over `rank_for` rows (also exposed on `/api/picks`). |
+| `predict_cli.py` | Terminal command for the prediction layer. |
+| `backfill_history.py` | One-time resumable `/timeseries` → `item_daily_history` backfill. |
+| `osrs_merch_scan.py` | Original standalone CLI/GUI tool. |
 
 ## Run it locally
 
 ```fish
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+# First time (or after wiping the DB), backfill daily history for FAST_SCAN:
+.venv/bin/python backfill_history.py
 .venv/bin/python app.py            # http://127.0.0.1:8777
 ```
 
-The first launch has no snapshot, so the writer scans immediately (~1–2 min for
-the default 160-item shortlist) and the page shows the live progress console.
-After that it rescans every 10 minutes, and **Refresh** forces one on demand.
-
-Changing capital or the item floor and pressing **Apply** does *not* scan — it
-re-ranks the snapshot already in the database. That is the point of the split.
-
-To try it quickly without a long first scan, shorten the shortlist:
+Without a backfill, `FAST_SCAN` refuses to score (visible error) instead of
+serving an empty “ok” snapshot. For a quick legacy smoke test:
 
 ```fish
-env SHORTLIST=25 .venv/bin/python app.py
+env FAST_SCAN=0 SHORTLIST=25 .venv/bin/python app.py
 ```
 
+Changing capital or floor re-ranks the snapshot already in the database —
+it does not scan. Only **Scan** hits the wiki.
 ## Configuration
 
 All optional; the defaults suit a local single-instance run. Gp values accept
@@ -50,20 +56,27 @@ All optional; the defaults suit a local single-instance run. Gp values accept
 
 | Var | Default | Notes |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///osrs_scanner.db` | `postgresql+psycopg://…` to switch (uncomment psycopg in `requirements.txt`). |
+| `DATABASE_URL` | `sqlite:///osrs_scanner.db` | `postgresql+psycopg://…` for managed Postgres (`psycopg` is in `requirements.txt`). |
 | `SCAN_INTERVAL_MIN` | `10` | Scheduled scan interval. |
-| `SCAN_ON_STARTUP` | `1` | Scan at boot only when the database has no snapshot. |
-| `KEEP_SCANS` | `50` | Older snapshots are pruned after each scan. |
+| `SCAN_ON_STARTUP` | `1` | Scan at boot only when the database has no ok snapshot. |
+| `KEEP_SCANS` | `50` | Older `scans`/`picks` pruned after each scan. |
+| `FAST_SCAN` | `1` | All-items path from DB history. Requires backfill (`MIN_HISTORY_READY`). |
+| `MIN_HISTORY_READY` | `50` | Refuse FAST_SCAN until this many items have ≥`MIN_HISTORY_DAYS` history. |
+| `MIN_HISTORY_DAYS` | `45` | Same bar as `derive_trend_metrics`. |
+| `MIN_SCORED_ITEMS` | `1` | Below this, a finished scan is stored as `degraded`, not `ok`. |
+| `READY_MAX_AGE_MIN` | `30` | `/healthz` returns 503 when the ok snapshot is older than this. |
+| `SNAPSHOT_KEEP_DAYS` | `3` | Raw 10-min `item_snapshots` retention. |
+| `ROLE` | `all` | `all` = API+writer; `api` = reader only; `writer` = scheduler only (`python app.py` with `ROLE=writer`). |
 | `REFERENCE_BANKROLL` | `50m` | The **smallest** capital any member might enter — see below. |
 | `GLOBAL_FLOOR` | `100k` | The **lowest** floor any member might pick. |
-| `SHORTLIST` | `160` | Items given the expensive per-item history call. |
-| `SLEEP` | `0.6` | Per-item delay. Keep it polite. |
+| `SHORTLIST` | `300` | Legacy path only (`FAST_SCAN=0`): items given a per-item `/timeseries` call. |
+| `SLEEP` | `0.6` | Per-item politeness delay (legacy enrich + gap-fill). |
 | `DEFAULT_CAPITAL` / `DEFAULT_FLOOR` | `700m` / `500k` | What the UI starts on. |
-| `CLAN_PASSWORD` | *(unset)* | Unset means **no auth**. Fine on localhost; set it before exposing the port. |
+| `CLAN_PASSWORD` | *(unset)* | Unset = open. **Required** when `HOST` is not loopback. |
 | `SECRET_KEY` | derived from the password | Set it to keep sessions valid across password changes. |
-| `HOST` / `PORT` | `127.0.0.1` / `8777` | |
-| `UA` | `merch-scanner - nekrosisx` | The wiki blocks the default requests agent. Rarely worth changing. |
-
+| `SECURE_COOKIES` | auto | Defaults on when `HOST` is not loopback. |
+| `HOST` / `PORT` | `127.0.0.1` / `8777` | Bind `0.0.0.0` only behind TLS with `CLAN_PASSWORD` set. |
+| `UA` | `merch-scanner - nekrosisx` | The wiki blocks the default requests agent. |
 `REFERENCE_BANKROLL` is counter-intuitive: it feeds `prefilter`'s capacity test
 (`limit × high ≥ bankroll × min_deploy_frac`), which gets **stricter** as the
 bankroll grows. A large value would quietly drop the small and mid-cap items a
@@ -294,76 +307,177 @@ Snapshot history is retained (`KEEP_SCANS=50`, `GET /api/scans`), so a
 before/after comparison across a weight change is possible without new
 scraping.
 
+## Dip/rise prediction (`analysis.py`, `predict_cli.py`)
+
+A second, deterministic scoring layer on top of the snapshot, for spotting
+short-term dip-buy and flip opportunities rather than the swing/merch
+timeframe the main scores target. Rule-based by design, not a trained
+model — see "Calculation logic" above: this project's philosophy is
+transparent, auditable formulas, and there is no labelled outcome dataset
+(did a flagged dip actually reverse profitably?) to train or validate a
+model against yet.
+
+```fish
+.venv/bin/python predict_cli.py                    # top 30 by dip confidence
+.venv/bin/python predict_cli.py --mode flip --top 15
+.venv/bin/python predict_cli.py --mode risk
+.venv/bin/python predict_cli.py --capital 1.5b --floor 1m
+```
+
+It reads the DB the same way `GET /api/picks` does — no wiki calls, and it
+needs the app or worker to have produced at least one snapshot first.
+
+**Indicators**, computed on the 30-day daily `spark` series already stored
+per item (not true 5m/1h intraday candles — those are only ever fetched as
+a current-value bulk snapshot, never as history, to stay inside the
+writer's per-scan wiki call budget):
+
+| Field | Definition |
+|---|---|
+| `ema5` / `ema20` / `ema_signal` | EMA of daily midpoints; `bullish` when `ema5 > ema20`. |
+| `rsi14` / `rsi_state` | Wilder's RSI; `oversold` <30, `overbought` >70. |
+| `spread_pct` | `(sell_price - buy_price) / buy_price * 100`. |
+| `vol_ratio` | `buy_vol_1h / sell_vol_1h`, from the `/1h` bulk call already made in `prefilter()` (previously summed and discarded; now also stored per item). |
+
+**Scores**, percentile-normalised within the candidate set like `merch_score`:
+
+```
+dip_confidence = 100 * clamp(0.40*oversold + 0.35*revert + 0.25*liq_rank, 0, 1)
+    oversold = clamp((30 - rsi14) / 30, 0, 1)
+    revert   = clamp(-z30, 0, 2) / 2
+    liq_rank = percentile rank of (buy_vol_1h + sell_vol_1h)
+
+flip_score = 100 * clamp(0.55*spread_rank + 0.45*vol_day_rank, 0, 1)
+
+risk_flags:
+    volume_spike    — bottom-30% vol_day item with 1h volume > 5x its typical hourly rate
+    wide_spread      — spread_pct >= 20 (close to the 25% prefilter cap)
+    pump_dump_risk   — rsi14 > 80, trend == rising, sc_volatility_rank >= 75
+```
+
+`predicted_trend` is `RISK: PUMP-DUMP` (if flagged) > `STRONG BUY DIP`
+(`dip_confidence >= 70` and oversold) > `BUY DIP` (`dip_confidence >= 45`) >
+`OVERBOUGHT` (overbought RSI or `z30 > 1.5`) > `NEUTRAL`.
+
+Storage: `buy_vol_1h`/`sell_vol_1h` are new `picks` columns, backfilled onto
+existing databases by a migration in `db.init_db()`. Pre-migration snapshot
+rows have them as `NULL` until the next scan runs.
+
 ## API
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/picks?capital=&floor=&top=&mode=` | Personalised picks from the latest snapshot. `503` until the first scan lands. |
-| `GET /api/status` | Snapshot age, next scheduled run, whether a scan is in flight. |
-| `POST /api/refresh` | Trigger a scan. Single-flight: returns `started: false` if one is already running or if it was debounced (30 s). |
+| `GET /api/picks?capital=&floor=&top=&mode=` | Personalised ranking + heuristic dip/flip/risk fields (`analysis_note` explains confidence). `503` until the first ok scan lands. |
+| `GET /api/status` | Snapshot age, next scheduled run, whether a scan is in flight, readiness hints. |
+| `POST /api/refresh` | Trigger a scan. Single-flight; debounced manuals return **429**. |
 | `GET /api/refresh/stream` | SSE `phase` / `log` / `progress` / `result` events, replayed from the start of the current scan. |
 | `GET /api/scans?limit=` | Snapshot history. |
-| `GET /api/item/{id}/history?limit=` | One item's stored fields across recent scans — feeds the drill-down's "last few scans" chart. Bounded by `KEEP_SCANS`, so it's roughly the last `SCAN_INTERVAL_MIN * KEEP_SCANS` of wall time, not long history. |
-| `GET /healthz` | Open (no auth) — snapshot presence and age. |
+| `GET /api/item/{id}/history?limit=` | One item's stored fields across recent scans — feeds the inspector chart. Bounded by `KEEP_SCANS`. |
+| `GET /healthz` | Open (no auth). `ready: true` and HTTP 200 only when an ok snapshot is fresh and non-empty; otherwise 503 with `ok: true` for process liveness detail in the body. |
 
 The wiki is only ever contacted by the writer, on a schedule, with the custom
 user agent and the existing retry/backoff. Readers never call it.
 
 ## Frontend (static/index.html)
 
-Still a single vanilla-JS file, no framework, no build step — filtering and
-the drill-down are ~250 extra lines in the same style as the rest of the page.
+Merch Desk — Emerald Ladder palette (tracker-style olive dark + emerald accent),
+Source Sans 3 with tabular figures for columns, dark default with a light toggle
+(`merchdesk.theme`). Single vanilla-JS file, no framework.
 
-- **Filter bar** — search (`/` to focus), a buy-dips/avoid mode toggle (wired
-  to the `rank_all` field already in each row), trend chips, score/volatility
-  thresholds, a news-only toggle, and a column-visibility menu for the fields
-  the table doesn't show by default (`limit`, `vol_day`, `units_24h`, `spark`,
-  `catalyst`, `reason`). Everything filters the **already-fetched** snapshot
-  client-side — the page now requests `top=200` up front so a filter can reach
-  every item in the snapshot, not just the first 50 by whatever sort was active.
-  A result-count bar with removable chips shows what's currently narrowing the
-  table; **Reset** clears it. Capital, floor, and all filters persist in
-  `localStorage` across reloads.
-- **Drill-down** — click a row (not a sort arrow) for a modal with the tax
-  breakdown (buy/sell/tax/net margin), `merch`/`flip`/`swing` score bars with
-  an optional expand into the underlying percentile components
-  (`sc_throughput`, `sc_liquidity`, `sc_volatility_rank`, `sc_value`), a
-  range-position gauge from `rank_all`/`z30`, the 30-day spark blown up, and a
-  small bar chart from the new `/api/item/{id}/history` endpoint. `Esc` closes
-  it, `j`/`k` step to the previous/next row in the current sort and filter.
-- **Mobile** — below 900px the table hides secondary columns
-  (`limit`, `vol_day`, `units_24h`, `spark`, `catalyst`, `reason`) via CSS; the
-  drill-down is the way to see the rest.
-
-None of this changed the reader's zero-network-call guarantee above — every
-control re-slices data already sitting in the browser, except opening the
-drill-down, which makes one lightweight call to the new history endpoint.
+- **Layout** — filter rail · sortable table · item inspector. Capital/floor in
+  the top bar; ticker shows session highlights only (best gp/24h, avg score, top
+  pick). **Scan** starts a shared wiki refresh with a live progress panel.
+- **Filters** — search (`/`), buy-dips/avoid, trend, score threshold,
+  watchlist-only, column toggles. Client-side over `top=200`. Persisted in
+  `localStorage` (`merchdesk.filters`).
+- **Analysis columns** — risk in the table; dip / flip / predicted trend in the
+  inspector (heuristic; see footer and `analysis_note`).
+- **Inspector** — qty execution calc, GE tax, signals, 30d chart, recent scan
+  history, score breakdown, catalyst/reason when present, copy buy/sell, wiki,
+  local watchlist. Does not re-list buy/sell/margin (those stay in the table).
+- **Mobile** — panes stack below 860px; secondary columns hide.
 
 ## Tests
 
 ```fish
-.venv/bin/python tests/test_parity.py   # new split == the original run_scan
-.venv/bin/python tests/test_app.py      # storage, personalisation, single-flight, SSE, auth
+.venv/bin/python tests/test_parity.py    # new split == the original run_scan
+.venv/bin/python tests/test_app.py       # storage, personalisation, single-flight, SSE, auth
+.venv/bin/python tests/test_analysis.py  # EMA/RSI math, dip/risk classification thresholds
+.venv/bin/python tests/test_phase2.py    # history gate, degraded snapshots, rollover gap-fill
 ```
 
-Both are fully offline: `tests/fake_wiki.py` is a deterministic stand-in for
-the API, and `tests/_legacy_monolith.py` is a frozen pre-refactor copy of the
-tool used as the parity oracle (do not edit it).
+Fully offline: `tests/fake_wiki.py` is a deterministic stand-in for the API,
+and `tests/_legacy_monolith.py` is a frozen pre-refactor copy of the tool used
+as the parity oracle (do not edit it).
 
 ## Honesty notes
 
 Prices are real trades observed by RuneLite and will **not** match the GE's
 lagged guide price. "News" badges are best-effort keyword matches against the
-OSRS news RSS — a hint, not authoritative release data.
+OSRS news RSS — a hint, not authoritative release data. Dip/flip/risk scores
+are rule-based heuristics on daily spark data — **not backtested**.
 
 Every margin, ROI and gp/24h figure is **net of the 2% GE sale tax** (capped at
 5m/item) — audited 2026-07-24, see "GE tax — confirmed applied". The one
 inaccuracy is in the conservative direction: tax-exempt items such as the Old
 school bond are taxed anyway, so their profit is understated.
 
-## Deploying
+## Deploying (VPS + Cloudflare Tunnel)
 
-Deliberately not set up yet: this runs locally while the scoring is being
-trialled. When it moves to a host, the shape is one always-on service running
-the API with the in-process scheduler, plus managed Postgres via
-`DATABASE_URL`, `CLAN_PASSWORD` set, and `HOST=0.0.0.0`.
+Production target: a small always-on VPS running Docker Compose (`app` +
+Postgres + `cloudflared`). The public hostname
+**https://scan.wiseoldtools.com** stays on the existing Cloudflare Tunnel
+(`osrs-merch-scanner`); the VPS is the only origin. No public HTTP ports —
+firewall SSH only; the tunnel reaches `app:8777` on the Compose network.
+
+### One-time VPS bootstrap
+
+1. Create an Ubuntu 24.04 VPS (~2 GB RAM). SSH in as root.
+2. Copy the repo to `/opt/merch-desk` (git clone or `rsync`).
+3. Run `sudo bash deploy/bootstrap-vps.sh` (Docker + UFW SSH-only).
+4. Copy secrets:
+   - `.env` from `.env.example` — set `POSTGRES_PASSWORD`, `CLAN_PASSWORD`,
+     `SECRET_KEY`.
+   - Tunnel credentials:
+     `cp ~/.cloudflared/079ca8d2-f96c-4b97-99ac-9a450c68c6a6.json \
+        /opt/merch-desk/deploy/cloudflared/credentials.json`
+     (from the machine that created the tunnel; file is gitignored).
+5. Start DB + app (**leave the tunnel profile off** while backfilling):
+
+```bash
+cd /opt/merch-desk
+docker compose up -d --build db app
+docker compose exec app python backfill_history.py   # ~40 min
+```
+
+6. First scan — either set `SCAN_ON_STARTUP=1` and recreate the app container,
+   or log in and hit Refresh in the UI (or `POST /api/refresh` with a session).
+   Wait until `curl -s http://127.0.0.1:8777/healthz` shows `"ready":true`.
+
+### Cutover (move origin off your home machine)
+
+1. On the **home** machine: stop `cloudflared tunnel run osrs-merch-scanner`
+   and stop any local `python app.py`.
+2. On the **VPS**: `docker compose --profile tunnel up -d tunnel`
+3. Verify: `https://scan.wiseoldtools.com/healthz` and UI login.
+4. Confirm home no longer runs the tunnel or the app.
+
+Only one `cloudflared` connector should be active for this tunnel at a time.
+
+### Compose cheatsheet
+
+| Command | Purpose |
+|---|---|
+| `docker compose up -d --build db app` | App + Postgres (no public tunnel) |
+| `docker compose --profile tunnel up -d tunnel` | Attach Cloudflare Tunnel |
+| `docker compose exec app python backfill_history.py` | One-time history backfill |
+| `docker compose logs -f app` | Follow writer/API logs |
+
+`CLAN_PASSWORD` is **required** when `HOST` is not loopback — the process
+refuses to start otherwise. Compose sets `HOST=0.0.0.0` inside the container.
+
+### Local / split-process notes
+
+For development, SQLite + `python app.py` on loopback still works. To split
+roles later: `ROLE=writer` (scheduler only) and `ROLE=api` (HTTP only) sharing
+Postgres — not required at clan scale.

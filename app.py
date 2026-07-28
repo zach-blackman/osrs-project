@@ -9,6 +9,7 @@ same rows, instantly — which is the whole point of the migration.
 import hashlib
 import hmac
 import json
+import logging
 import os
 import queue
 import secrets
@@ -19,16 +20,19 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
                                StreamingResponse)
 
+import analysis
 import config
 import db
 import scanner
 import worker
 
+log = logging.getLogger("osrs.app")
+
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 COOKIE_NAME = "clan_session"
 OPEN_PATHS = {"/login", "/healthz"}
 
-app = FastAPI(title="OSRS Merch Scanner", docs_url=None, redoc_url=None)
+app = FastAPI(title="OSRS Merch Desk", docs_url=None, redoc_url=None)
 
 
 # ---------------------------------------------------------------- auth
@@ -44,6 +48,16 @@ def _secret():
 
 def _token():
     return hmac.new(_secret(), b"clan-member", hashlib.sha256).hexdigest()
+
+
+def _password_ok(password: str) -> bool:
+    """Constant-time compare that tolerates length mismatch (unlike raw
+    secrets.compare_digest on unequal strings, which raises ValueError)."""
+    if not config.CLAN_PASSWORD:
+        return False
+    left = hashlib.sha256(password.encode("utf-8")).digest()
+    right = hashlib.sha256(config.CLAN_PASSWORD.encode("utf-8")).digest()
+    return hmac.compare_digest(left, right)
 
 
 def _authed(request):
@@ -63,28 +77,33 @@ async def require_login(request: Request, call_next):
     return await call_next(request)
 
 
-LOGIN_PAGE = """<!doctype html><meta charset="utf-8">
-<title>Merch Scanner &mdash; sign in</title>
+LOGIN_PAGE = """<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Merch Desk — sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
- body{margin:0;height:100vh;display:grid;place-items:center;background:#0f1115;
-      color:#e7ebf2;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",
-      Roboto,Arial,sans-serif}
- form{background:#171b24;border:1px solid #262c39;border-radius:14px;
-      padding:28px 26px;width:320px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
- h1{margin:0 0 4px;font-size:18px}h1 span{color:#f4c430}
- p{margin:0 0 18px;color:#9aa4b6;font-size:12.5px}
- input{width:100%%;font:inherit;padding:9px 11px;border-radius:8px;
-       background:#0f1115;border:1px solid #313947;color:#e7ebf2;outline:none}
- input:focus{border-color:#d9a521}
- button{width:100%%;margin-top:12px;font:inherit;font-weight:600;cursor:pointer;
-        padding:10px;border:0;border-radius:9px;color:#241b04;
-        background:linear-gradient(180deg,#ffd75a,#f4c430 55%%,#d9a521)}
- .err{color:#ef5b5b;font-size:12.5px;margin-top:10px}
+:root{--bg:#EEF2F6;--panel:#FFFFFF;--ink:#1B2838;--muted:#4B6274;--line:#C8D4E0;--accent:#1A9FFF;--surface:#FFFFFF}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);
+     color:var(--ink);font:15px/1.5 "IBM Plex Sans",Helvetica Neue,sans-serif}
+form{background:var(--panel);border:1px solid var(--line);padding:28px 26px;width:min(360px,92vw)}
+h1{margin:0 0 4px;font:700 1.45rem/1.2 "IBM Plex Sans",Helvetica Neue,sans-serif;letter-spacing:-.02em}
+h1 em{font-style:normal;color:var(--accent)}
+p{margin:0 0 18px;color:var(--muted);font-size:13.5px}
+input{width:100%;font:inherit;padding:10px 12px;border-radius:2px;
+      background:var(--surface);border:1px solid var(--line);color:var(--ink);outline:none}
+input:focus{border-color:var(--accent)}
+button{width:100%;margin-top:12px;font:inherit;font-weight:600;cursor:pointer;
+       padding:10px;border:0;border-radius:2px;color:#fff;background:var(--accent)}
+button:hover{filter:brightness(1.05)}
+.err{color:#B33A3A;font-size:13px;margin-top:10px}
 </style>
 <form method="post" action="/login">
-  <h1>Grand Exchange <span>Merch Scanner</span></h1>
-  <p>Clan members only.</p>
-  <input type="password" name="password" placeholder="Clan password" autofocus>
+  <h1>Merch <em>Desk</em></h1>
+  <p>Clan members only. Shared snapshot, your capital.</p>
+  <input type="password" name="password" placeholder="Clan password" autofocus autocomplete="current-password">
   <button type="submit">Sign in</button>
   %s
 </form>"""
@@ -101,12 +120,12 @@ async def login_submit(request: Request):
     # python-multipart, which is a lot of dependency for one urlencoded field.
     body = (await request.body()).decode("utf-8", "replace")
     password = urllib.parse.parse_qs(body).get("password", [""])[0]
-    if not config.CLAN_PASSWORD or not secrets.compare_digest(
-            password, config.CLAN_PASSWORD):
+    if not _password_ok(password):
         return RedirectResponse("/login?bad=1", status_code=303)
     resp = RedirectResponse("/", status_code=303)
-    resp.set_cookie(COOKIE_NAME, _token(), max_age=60 * 60 * 24 * 30,
-                    httponly=True, samesite="lax")
+    resp.set_cookie(
+        COOKIE_NAME, _token(), max_age=60 * 60 * 24 * 30,
+        httponly=True, samesite="lax", secure=config.SECURE_COOKIES)
     return resp
 
 
@@ -121,8 +140,16 @@ def logout():
 
 @app.on_event("startup")
 def _startup():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    config.assert_deploy_safe()
     db.init_db()
-    worker.start_scheduler()
+    if config.ROLE in ("all", "writer"):
+        worker.start_scheduler()
+        log.info("scheduler started (ROLE=%s)", config.ROLE)
+    else:
+        log.info("ROLE=api — scheduler not started in this process")
 
 
 # ------------------------------------------------------------------ api
@@ -159,6 +186,7 @@ def api_picks(capital: str = Query(None), floor: str = Query(None),
             status_code=503)
 
     picks = scanner.rank_for(rows, cap, flr, top=top, mode=mode)
+    picks = analysis.analyze(picks)
     updated = scan.get("finished_at") or scan.get("started_at")
     return {
         "rows": picks,
@@ -168,6 +196,9 @@ def api_picks(capital: str = Query(None), floor: str = Query(None),
         "updated_at": updated,
         "age_seconds": round(time.time() - updated) if updated else None,
         "n_market_items": len(rows),
+        "analysis_note": (
+            "Heuristic dip/flip/risk scores from EMA/RSI on the 30-day spark "
+            "and last-hour volume — not backtested. Treat as a hint."),
     }
 
 
@@ -176,15 +207,19 @@ def api_status():
     scan = db.latest_ok_scan()
     st = worker.runner.status()
     updated = (scan.get("finished_at") or scan.get("started_at")) if scan else None
+    ready = db.readiness()
     return {
         "scanning": st["scanning"],
         "scan_started_at": st["started_at"],
         "updated_at": updated,
         "age_seconds": round(time.time() - updated) if updated else None,
         "n_items": scan["n_items"] if scan else 0,
-        "next_run_at": worker.next_run_at(),
+        "next_run_at": worker.next_run_at() if config.ROLE in ("all", "writer") else None,
         "interval_minutes": config.SCAN_INTERVAL_MIN,
         "last_error": st["last_error"],
+        "ready": ready["ready"],
+        "history_ready": ready.get("history_ready"),
+        "fast_scan": config.FAST_SCAN,
         "defaults": {"capital": config.DEFAULT_CAPITAL,
                      "floor": config.DEFAULT_FLOOR},
     }
@@ -193,8 +228,19 @@ def api_status():
 @app.post("/api/refresh")
 def api_refresh():
     """Ask for a fresh scan. Single-flight: if one is already running you are
-    told so and should just attach to the stream."""
-    return worker.runner.trigger(source="manual")
+    told so and should just attach to the stream. Debounced manual refreshes
+    return 429 so clients can back off."""
+    if config.ROLE == "api":
+        return JSONResponse(
+            {"started": False, "scanning": False,
+             "reason": "this process is ROLE=api — refresh the writer"},
+            status_code=503)
+    result = worker.runner.trigger(source="manual")
+    if (not result.get("started") and not result.get("scanning")
+            and result.get("retry_after")):
+        return JSONResponse(result, status_code=429,
+                            headers={"Retry-After": str(result["retry_after"])})
+    return result
 
 
 @app.get("/api/refresh/stream")
@@ -237,10 +283,20 @@ def api_item_history(item_id: int, limit: int = Query(50, ge=1, le=200)):
 
 @app.get("/healthz")
 def healthz():
-    scan = db.latest_ok_scan()
-    updated = (scan.get("finished_at") or scan.get("started_at")) if scan else None
-    return {"ok": True, "has_snapshot": bool(scan),
-            "age_seconds": round(time.time() - updated) if updated else None}
+    """Liveness always answers; `ready` is false when the snapshot is missing,
+    empty, or older than READY_MAX_AGE_MIN — use ready for load-balancer probes."""
+    probe = db.readiness()
+    body = {
+        "ok": True,
+        "ready": probe["ready"],
+        "reason": probe.get("reason"),
+        "has_snapshot": probe["has_snapshot"],
+        "age_seconds": probe.get("age_seconds"),
+        "n_items": probe.get("n_items"),
+        "history_ready": probe.get("history_ready"),
+        "role": config.ROLE,
+    }
+    return JSONResponse(body, status_code=200 if probe["ready"] else 503)
 
 
 # ------------------------------------------------------------- frontend
@@ -253,6 +309,10 @@ def index():
 
 def main():
     import uvicorn
+    config.assert_deploy_safe()
+    if config.ROLE == "writer":
+        worker.run_writer_forever()
+        return
     db.init_db()
     if not config.CLAN_PASSWORD:
         print("! CLAN_PASSWORD is unset — the app is open to anyone who can "

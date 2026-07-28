@@ -2,10 +2,11 @@
 
 Everything the writer and reader need is read once, here, so the deployment
 surface is a list of env vars rather than edits scattered through the code.
-Defaults are tuned for a local single-instance run (SQLite, no auth).
+Defaults are tuned for a local single-instance run (SQLite, optional auth).
 """
 
 import os
+import sys
 
 import scanner
 
@@ -39,8 +40,25 @@ SCAN_ON_STARTUP = os.environ.get("SCAN_ON_STARTUP", "1") not in ("0", "false")
 # the SMALLEST plausible capital, not the largest.
 REFERENCE_BANKROLL = _int("REFERENCE_BANKROLL", 50_000_000)
 GLOBAL_FLOOR = _int("GLOBAL_FLOOR", 100_000)
-SHORTLIST = _int("SHORTLIST", 160)
+SHORTLIST = _int("SHORTLIST", 300)
 SLEEP = _float("SLEEP", 0.6)                 # per-item politeness delay
+
+# Phase 2 (see MIGRATION_PLAN_V2.md): score every tradeable item from a
+# DB-backed history table instead of re-fetching a year of daily candles per
+# item on every scan. Requires a completed backfill (see MIN_HISTORY_READY).
+FAST_SCAN = os.environ.get("FAST_SCAN", "1") not in ("0", "false", "")
+SNAPSHOT_KEEP_DAYS = _int("SNAPSHOT_KEEP_DAYS", 3)   # raw 10-min pulse retention
+MIN_HISTORY_DAYS = _int("MIN_HISTORY_DAYS", 45)       # same bar as derive_trend_metrics
+# Refuse FAST_SCAN until at least this many items have MIN_HISTORY_DAYS stored.
+MIN_HISTORY_READY = _int("MIN_HISTORY_READY", 50)
+# A finished scan with fewer scored items is stored as status=degraded, not ok.
+MIN_SCORED_ITEMS = _int("MIN_SCORED_ITEMS", 1)
+# Readiness: /healthz fails when the latest ok snapshot is older than this.
+READY_MAX_AGE_MIN = _int("READY_MAX_AGE_MIN", 30)
+
+# Process role: "all" = API + writer (default), "api" = reader only,
+# "writer" = scheduler only (no HTTP, or HTTP without scheduler when co-hosted).
+ROLE = os.environ.get("ROLE", "all").strip().lower() or "all"
 
 # Defaults the UI starts with; each user overrides them at read time.
 DEFAULT_CAPITAL = _int("DEFAULT_CAPITAL", 700_000_000)
@@ -53,12 +71,38 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "").strip()
 PORT = int(os.environ.get("PORT", "8777"))
 HOST = os.environ.get("HOST", "127.0.0.1")
 
+# Secure cookies: on by default when bound off-loopback; override with 0/1.
+_LOOPBACK = HOST in ("127.0.0.1", "localhost", "::1")
+_secure_env = os.environ.get("SECURE_COOKIES", "").strip().lower()
+if _secure_env in ("1", "true", "yes"):
+    SECURE_COOKIES = True
+elif _secure_env in ("0", "false", "no"):
+    SECURE_COOKIES = False
+else:
+    SECURE_COOKIES = not _LOOPBACK
+
 # The wiki blocks the default requests UA; this value is user-customised and
 # preserved from the original tool. Overriding it is possible but rarely right.
 UA = os.environ.get("UA", scanner.UA).strip() or scanner.UA
 if UA != scanner.UA:
     scanner.UA = UA
     scanner.SESSION.headers.update({"User-Agent": UA})
+
+
+def is_loopback():
+    return _LOOPBACK
+
+
+def assert_deploy_safe():
+    """Refuse to start an open app on a non-loopback bind."""
+    if not is_loopback() and not CLAN_PASSWORD:
+        print("FATAL: CLAN_PASSWORD is required when HOST is not loopback "
+              f"(HOST={HOST!r}). Refusing to start.", file=sys.stderr)
+        raise SystemExit(2)
+    if ROLE not in ("all", "api", "writer"):
+        print(f"FATAL: ROLE must be all|api|writer (got {ROLE!r}).",
+              file=sys.stderr)
+        raise SystemExit(2)
 
 
 def scan_config():

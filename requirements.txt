@@ -4,6 +4,5 @@ uvicorn[standard]>=0.34
 sqlalchemy>=2.0
 apscheduler>=3.11
 
-# Postgres only. SQLite (the local default) needs nothing extra; install this
-# when you point DATABASE_URL at a postgresql+psycopg:// URL.
-# psycopg[binary]>=3.2
+# Install when DATABASE_URL points at postgresql+psycopg://...
+psycopg[binary]>=3.2

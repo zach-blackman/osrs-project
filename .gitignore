@@ -5,3 +5,5 @@ __pycache__/
 *.db-wal
 *.db-shm
 .lavish/
+.env
+deploy/cloudflared/credentials.json

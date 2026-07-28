@@ -1,0 +1,7 @@
+tunnel: 079ca8d2-f96c-4b97-99ac-9a450c68c6a6
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: scan.wiseoldtools.com
+    service: http://app:8777
+  - service: http_status:404

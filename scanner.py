@@ -166,7 +166,9 @@ def prefilter(bankroll, min_deploy_frac, max_spread_pct, stale_hours,
 
         # Must have traded at all in the last hour.
         hr = hourly.get(str(iid)) or {}
-        hr_vol = (hr.get("highPriceVolume") or 0) + (hr.get("lowPriceVolume") or 0)
+        buy_vol_1h = hr.get("highPriceVolume") or 0
+        sell_vol_1h = hr.get("lowPriceVolume") or 0
+        hr_vol = buy_vol_1h + sell_vol_1h
         if hr_vol <= 0:
             continue
 
@@ -179,12 +181,15 @@ def prefilter(bankroll, min_deploy_frac, max_spread_pct, stale_hours,
             "id": iid,
             "name": meta["name"],
             "limit": limit,
+            "members": meta.get("members"),
             "high": high,
             "low": low,
             "margin": margin,
             "roi": margin / low * 100,
             "cap_per_4h": cap_per_4h,
             "hr_vol": hr_vol,
+            "buy_vol_1h": buy_vol_1h,
+            "sell_vol_1h": sell_vol_1h,
         })
 
     # Rank by raw gp opportunity per window, capped by observed flow.
@@ -198,11 +203,10 @@ def prefilter(bankroll, min_deploy_frac, max_spread_pct, stale_hours,
 
 # ----------------------------------------------------- stage 2: history
 
-def enrich(row, sleep):
-    """Pull a year of daily candles and derive trend metrics."""
-    data = get("/timeseries", id=row["id"], timestep="24h").get("data", [])
-    time.sleep(sleep)
-
+def _parse_timeseries(data):
+    """/timeseries `data` array -> (series, vols) daily price/volume lists,
+    oldest first. Shared by the live enrich() path and anything reading the
+    same shape from storage (the backfill script)."""
     series, vols = [], []
     for p in data:
         hi, lo = p.get("avgHighPrice"), p.get("avgLowPrice")
@@ -210,7 +214,16 @@ def enrich(row, sleep):
             continue
         series.append((hi + lo) / 2 if (hi and lo) else (hi or lo))
         vols.append((p.get("highPriceVolume") or 0) + (p.get("lowPriceVolume") or 0))
+    return series, vols
 
+
+def derive_trend_metrics(row, series, vols):
+    """Pure: derive trend/volatility/rank stats from a daily price series and
+    matching daily-volume series (oldest first, `row` already has high/low
+    set). Returns the updated row, or None if there is not enough history
+    yet. This is the math half of the old enrich() — split out so both the
+    live per-item /timeseries path AND the DB-backed all-items path
+    (scan_market_fast) compute identically, from different sources."""
     if len(series) < 45:
         return None
 
@@ -246,6 +259,39 @@ def enrich(row, sleep):
         "days": len(series),
     })
     return row
+
+
+def fetch_daily_candle(item_id, day, sleep=0.6):
+    """Gap-fill helper: one /timeseries call → the candle for `day`, or None.
+    Used only by the daily rollover when an item had too few 10-min snapshots
+    (app downtime). Returns a dict ready for db.insert_daily_history."""
+    data = get("/timeseries", id=item_id, timestep="24h").get("data", [])
+    time.sleep(sleep)
+    for point in data:
+        ts = point.get("timestamp")
+        if ts is None:
+            continue
+        candle_day = datetime.fromtimestamp(ts, tz=timezone.utc).date()
+        if candle_day != day:
+            continue
+        hi, lo = point.get("avgHighPrice"), point.get("avgLowPrice")
+        if hi is None and lo is None:
+            return None
+        price = (hi + lo) / 2 if (hi and lo) else (hi or lo)
+        volume = (point.get("highPriceVolume") or 0) + (point.get("lowPriceVolume") or 0)
+        return {"item_id": item_id, "day": day, "price": price, "volume": volume,
+                "source": "gapfill"}
+    return None
+
+
+def enrich(row, sleep):
+    """Pull a year of daily candles and derive trend metrics. Legacy,
+    network-per-item path — scan_market_fast() gets the same series shape
+    from item_daily_history instead. See MIGRATION_PLAN_V2.md."""
+    data = get("/timeseries", id=row["id"], timestep="24h").get("data", [])
+    time.sleep(sleep)
+    series, vols = _parse_timeseries(data)
+    return derive_trend_metrics(row, series, vols)
 
 
 # -------------------------------------------------------------- scoring
@@ -474,7 +520,7 @@ PICK_KEYS = ("id", "name", "now", "margin", "roi", "gp_24h", "vol_day",
              "swing", "merch_score", "catalyst", "reason", "limit",
              "buy_price", "sell_price", "tax", "sell_net", "units_24h", "spark",
              "sc_throughput", "sc_liquidity", "sc_volatility_rank", "sc_value",
-             "sc_trend_adj", "sc_catalyst")
+             "sc_trend_adj", "sc_catalyst", "buy_vol_1h", "sell_vol_1h")
 
 # What a snapshot stores per item: everything that is pure market data, i.e.
 # independent of any one user's capital or floor. Note the absentees —
@@ -483,7 +529,7 @@ PICK_KEYS = ("id", "name", "now", "margin", "roi", "gp_24h", "vol_day",
 MARKET_KEYS = ("id", "name", "buy_price", "sell_price", "tax", "sell_net",
                "margin", "roi", "now", "vol_day", "limit", "volatility",
                "trend", "rank_all", "rank90", "z30", "catalyst",
-               "catalyst_bonus", "spark")
+               "catalyst_bonus", "spark", "buy_vol_1h", "sell_vol_1h")
 
 
 @dataclass
@@ -601,6 +647,104 @@ def scan_market(cfg, on_event=None):
         "price_ts": started_at,
         "params": cfg.as_params(),
         "n_items": len(rows),
+    }
+    market_rows = [{k: r.get(k) for k in MARKET_KEYS} for r in rows]
+    return meta, market_rows
+
+
+def scan_market_fast(cfg, history_fn, on_event=None):
+    """All-items scan: 3 bulk calls + one batched history read, ZERO
+    per-item network calls. See MIGRATION_PLAN_V2.md §3.
+
+    Reuses prefilter()'s bulk fetch and data-quality filters, but — unlike
+    scan_market — does NOT apply cfg.shortlist. Every item that passes the
+    liquidity/price/spread checks gets scored, sourcing its daily history
+    from `history_fn(item_ids) -> {item_id: [(day, price, volume), ...]}`
+    (oldest first) instead of scanner.enrich()'s live /timeseries call. The
+    caller (worker.py) passes db.daily_history_for, keeping this module free
+    of any storage dependency — same separation scan_market already has.
+
+    `derive_trend_metrics` is the exact same function enrich() uses, so a
+    given item scores identically whichever path fetched its history from.
+
+    Returns (meta, market_rows) like scan_market. meta also carries
+    "item_meta" (id/name/limit/members for every candidate, for db.upsert_items)
+    and "raw_snapshots" (id/high/low/buy_vol_1h/sell_vol_1h for every
+    candidate — including thin-history ones excluded from market_rows — for
+    db.insert_snapshots, which feeds the daily rollover)."""
+    def log(msg, level="info"):
+        if on_event:
+            on_event("log", msg=msg, level=level)
+
+    def phase(label):
+        if on_event:
+            on_event("phase", label=label)
+
+    started_at = time.time()
+
+    phase("Pulling recent OSRS updates")
+    log("Fetching official OSRS news feed for content catalysts...")
+    news = fetch_news()
+    log(f"news feed: {len(news)} recent updates", "ok")
+
+    phase("Bulk scan of every tradeable item")
+    log(f"Reference capital: {fmt_gp(cfg.reference_bankroll)} "
+        f"· global price floor {fmt_gp(cfg.global_floor)}")
+    log("Fetching /mapping, /latest and /1h (three bulk calls)...")
+    cands = prefilter(cfg.reference_bankroll, cfg.min_deploy_frac,
+                      cfg.max_spread_pct, cfg.stale_hours, cfg.global_floor)
+    log(f"{len(cands)} items passed liquidity + price + capacity filters "
+        "(no shortlist cut — every one gets scored)", "ok")
+
+    phase(f"Loading stored history for {len(cands)} items")
+    history = history_fn([c["id"] for c in cands])
+    log(f"history loaded for {len(history)}/{len(cands)} items from the DB "
+        "— 0 /timeseries calls this cycle", "ok")
+
+    rows = []
+    total = len(cands)
+    kept = 0
+    for i, c in enumerate(cands, 1):
+        series_vols = history.get(c["id"])
+        enriched = None
+        if series_vols:
+            series = [p for _, p, _ in series_vols]
+            vols = [v or 0 for _, _, v in series_vols]
+            enriched = derive_trend_metrics(c, series, vols)
+        if enriched:
+            rows.append(enriched)
+            kept += 1
+        if on_event:
+            on_event("progress", done=i, total=total, name=c["name"], kept=kept)
+    log(f"{kept}/{total} items had enough stored history to score "
+        f"({total - kept} too new / not yet backfilled)", "ok")
+
+    phase("Computing market economics")
+    log(f"Deriving after-tax margins for {len(rows)} items...")
+
+    for r in rows:
+        high, low = r["high"], r["low"]
+        r["buy_price"] = low
+        r["sell_price"] = high
+        r["tax"] = round(min(high * 0.02, 5_000_000))
+        r["sell_net"] = round(high - r["tax"])
+        bonus, note = catalyst_for(r["name"], news)
+        r["catalyst_bonus"] = bonus
+        r["catalyst"] = note
+
+    log(f"snapshot ready — {len(rows)} items with market metrics", "ok")
+
+    meta = {
+        "started_at": started_at,
+        "finished_at": time.time(),
+        "price_ts": started_at,
+        "params": cfg.as_params(),
+        "n_items": len(rows),
+        "item_meta": [{"id": c["id"], "name": c["name"], "limit": c.get("limit"),
+                        "members": c.get("members")} for c in cands],
+        "raw_snapshots": [{"id": c["id"], "high": c["high"], "low": c["low"],
+                            "buy_vol_1h": c.get("buy_vol_1h"),
+                            "sell_vol_1h": c.get("sell_vol_1h")} for c in cands],
     }
     market_rows = [{k: r.get(k) for k in MARKET_KEYS} for r in rows]
     return meta, market_rows

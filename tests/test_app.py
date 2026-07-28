@@ -25,6 +25,9 @@ os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(_TMP, "smoke.db")
 os.environ["SCAN_ON_STARTUP"] = "0"
 os.environ["CLAN_PASSWORD"] = ""
 os.environ["SLEEP"] = "0"
+# Legacy shortlist path for this smoke test; Phase-2 coverage lives in test_phase2.py.
+os.environ["FAST_SCAN"] = "0"
+os.environ["ROLE"] = "all"
 
 import fake_wiki  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -156,7 +159,9 @@ def main():
 
             print("\ndebounce: a manual refresh right after a scan is refused")
             worker.MANUAL_DEBOUNCE_SEC = 30
-            d = client.post("/api/refresh").json()
+            deb = client.post("/api/refresh")
+            d = deb.json()
+            check(deb.status_code == 429, f"debounced returns 429 (got {deb.status_code})")
             check(not d["started"] and not d["scanning"],
                   f"debounced ({d.get('reason')})")
             worker.MANUAL_DEBOUNCE_SEC = 0
@@ -200,12 +205,14 @@ def main():
                       "API refuses an unauthenticated read")
                 check(bare.get("/", follow_redirects=False).status_code == 303,
                       "page redirects to the login form")
-                check(bare.get("/healthz").status_code == 200,
-                      "/healthz stays open for uptime checks")
-                bad = bare.post("/login", data={"password": "nope"},
+                hz = bare.get("/healthz")
+                check(hz.status_code in (200, 503),
+                      "/healthz stays reachable without auth")
+                # Length-mismatched wrong password must not 500 (compare_digest).
+                bad = bare.post("/login", data={"password": "no"},
                                 follow_redirects=False)
-                check(bad.headers.get("location") == "/login?bad=1",
-                      "wrong password is rejected")
+                check(bad.status_code == 303 and bad.headers.get("location") == "/login?bad=1",
+                      "wrong password is rejected without 500")
                 good = bare.post("/login", data={"password": "hunter2"},
                                  follow_redirects=False)
                 check(web.COOKIE_NAME in good.cookies,
@@ -216,8 +223,17 @@ def main():
                 config.CLAN_PASSWORD = ""
 
             print("\nhealth")
-            h = client.get("/healthz").json()
+            hr = client.get("/healthz")
+            h = hr.json()
             check(h["ok"] and h["has_snapshot"], "/healthz sees a snapshot")
+            check(h.get("ready") is True and hr.status_code == 200,
+                  "fresh ok snapshot is ready")
+            picks = client.get("/api/picks?capital=700m&floor=100k").json()
+            check("analysis_note" in picks, "picks carry analysis caveat")
+            if picks.get("rows"):
+                row0 = picks["rows"][0]
+                check("dip_confidence" in row0 and "risk_level" in row0,
+                      "picks rows include analysis fields")
 
         print("\ndurability: a fresh process still serves the snapshot")
         expected = db.latest_ok_scan()
