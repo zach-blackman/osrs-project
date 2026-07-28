@@ -82,19 +82,13 @@ a { color: var(--accent); }
 }
 #theme-toggle {
   display: flex; align-items: center; justify-content: center;
-  padding: 0 12px; min-width: 44px; color: var(--faint);
-  font-size: 11px; border: 0; background: transparent; cursor: pointer; height: 100%;
-  border-right: 1px solid var(--line); white-space: nowrap;
+  padding: 0 14px; min-width: 44px; color: var(--faint);
+  border: 0; background: transparent; cursor: pointer; height: 100%;
 }
 #theme-toggle:hover { color: var(--ink); }
-#logout {
-  display: flex; align-items: center; justify-content: center;
-  padding: 0 14px; min-width: 44px; color: var(--faint);
-  font-size: 11px; text-decoration: none; border: 0; background: transparent;
-  cursor: pointer; height: 100%;
-}
-#logout:hover { color: var(--ink); }
-.shell-logout-form { margin: 0; height: 100%; display: flex; }
+#theme-toggle .theme-icon { display: block; flex: 0 0 auto; }
+[data-theme="dark"] #theme-toggle .theme-icon-moon { display: none; }
+[data-theme="light"] #theme-toggle .theme-icon-sun { display: none; }
 
 #tool-slot {
   flex: 1 1 auto; min-height: 0; min-width: 0;
@@ -156,5 +150,4 @@ body.nav-open { overflow: hidden; }
 
 @media (max-width: 860px) {
   .shell-brand .sub { display: none; }
-  #theme-toggle, #logout { font-size: 12px; }
 }

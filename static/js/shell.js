@@ -13,7 +13,11 @@
     var t = theme === "light" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", t);
     var btn = $("theme-toggle");
-    if (btn) btn.textContent = t === "dark" ? "Light" : "Dark";
+    if (btn) {
+      var nextLabel = t === "dark" ? "Switch to light mode" : "Switch to dark mode";
+      btn.setAttribute("aria-label", nextLabel);
+      btn.setAttribute("title", nextLabel);
+    }
     try { localStorage.setItem("merchdesk.theme", t); } catch (e) {}
     document.dispatchEvent(new CustomEvent("shell:theme", { detail: { theme: t } }));
   }
