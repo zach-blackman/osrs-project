@@ -3,11 +3,11 @@
 Clan web app for OSRS helpers. Live tools: **Merch Desk** (GE flips) and
 **Achievements** (RuneLite ingest feed). **Alch** / **Movers** are scaffolded
 (`soon`). Shared market scans stay capital-agnostic; Cap/Floor and watchlists
-personalise per signed-in member.
+personalise per signed-in user.
 
-Auth is dual: **Discord OAuth** (guild-gated) and/or **admin invites** for
-members without Discord. Shared `CLAN_PASSWORD` remains only when neither
-provider is configured (legacy / local).
+Auth: **Discord OAuth** as an identity provider (any Discord account — like Google
+Sign-In) and/or **admin invites** for users without Discord. Default role is
+`user`; bootstrap/admin promotion is separate. No shared clan password.
 
 ```
   WRITER (only wiki caller)        DB (snapshots)           READER (stateless)
@@ -32,7 +32,7 @@ Public site: **https://scan.wiseoldtools.com**
 | `identity.py` | Discord/invite login, `/api/me*`, achievements ingest, admin. |
 | `userdb.py` | Users, sessions, invites, prefs, watchlist, achievements. |
 | `accounts.py` | Password / token hashing helpers. |
-| `discord_oauth.py` | Discord authorize / token / guild checks. |
+| `discord_oauth.py` | Discord authorize / token / identify (IdP). |
 | `worker.py` | Writer: APScheduler, single-flight scans, SSE fan-out, daily history rollover. |
 | `scanner.py` | `scan_market` / `scan_market_fast` (capital-agnostic) + `rank_for` (personalise). |
 | `db.py` | Snapshots, picks, `items` / `item_daily_history` / `item_snapshots`. |
@@ -43,7 +43,7 @@ Public site: **https://scan.wiseoldtools.com**
 | `static/tools/merch.html` | Merch Desk page (shell chrome + desk body). |
 | `static/tools/alch.html` | Alch Desk scaffold. |
 | `static/tools/movers.html` | Movers Desk scaffold. |
-| `static/js/shell.js` / `shell-user.js` | Tool drawer + signed-in user chip. |
+| `static/js/shell.js` / `shell-user.js` | Tool drawer + sign-in modal / user chip. |
 | `tests/test_identity.py` | Invites, prefs, ingest, Scan ACL, alerts. |
 | `osrs_merch_scan.py` | Original standalone CLI/GUI (parity / history only). |
 
@@ -69,22 +69,23 @@ env FAST_SCAN=0 SHORTLIST=25 .venv/bin/python app.py
 Changing **Cap** / **Floor** re-ranks the snapshot already in the database.
 Only **Scan** hits the wiki.
 
-Open locally with no auth providers (`CLAN_PASSWORD` unset, Discord/invites
-off). Off-loopback requires Discord OAuth, `INVITES_ENABLED=1`, or
-`CLAN_PASSWORD`.
+Open locally with no auth providers (Discord unset, invites off). Off-loopback
+requires Discord OAuth (`CLIENT_ID` + `SECRET` + `REDIRECT_URI`) or
+`INVITES_ENABLED=1`.
 
 ---
 
-## Auth (Discord + invites)
+## Auth (Discord IdP + invites)
 
 | Path | Config | Notes |
 |---|---|---|
-| Discord OAuth | `DISCORD_CLIENT_ID`, `CLIENT_SECRET`, `REDIRECT_URI`, `GUILD_ID` | Optional `DISCORD_REQUIRED_ROLE_ID` |
+| Discord OAuth | `DISCORD_CLIENT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | Identity provider only — not guild-gated |
 | Invite accounts | `INVITES_ENABLED=1` | Admin creates `/invite/<token>` links |
-| Legacy shared password | `CLAN_PASSWORD` only when providers off | Anonymous clan cookie |
+| Sign-in UI | Shell **Sign in** modal → `/auth/discord`; full page at `/login` | |
 
-Set `SECRET_KEY` whenever providers are on. Bootstrap admin via first user,
-`BOOTSTRAP_ADMIN_DISCORD_ID`, or `BOOTSTRAP_ADMIN_USERNAME`.
+Set `SECRET_KEY` whenever providers are on. New accounts default to role
+`user`. Bootstrap admin via first user, `BOOTSTRAP_ADMIN_DISCORD_ID`, or
+`BOOTSTRAP_ADMIN_USERNAME`.
 
 Manual **Scan** is **admin-only** when Discord/invites are enabled.
 
@@ -181,11 +182,9 @@ All optional; defaults suit a local single-instance run. Gp values accept
 | `SLEEP` | `0.6` | Per-item delay (legacy enrich + history gap-fill). |
 | `DEFAULT_CAPITAL` / `DEFAULT_FLOOR` | `700m` / `500k` | UI starting Cap/Floor. |
 | `DEFAULT_NATURE_COST` | `100` | Alch Desk nature-rune cost when `nature=` omitted. |
-| `CLAN_PASSWORD` | *(unset)* | Legacy shared password when Discord/invites off. |
 | `SECRET_KEY` | *(unset)* | Required for durable sessions with providers. |
-| `DISCORD_CLIENT_ID` / `SECRET` / `REDIRECT_URI` / `GUILD_ID` | | Discord OAuth. |
-| `DISCORD_REQUIRED_ROLE_ID` | *(unset)* | Optional role gate. |
-| `DISCORD_ACHIEVEMENTS_WEBHOOK_URL` | *(unset)* | Mirror ingest to Discord. |
+| `DISCORD_CLIENT_ID` / `SECRET` / `REDIRECT_URI` | | Discord as identity provider. |
+| `DISCORD_ACHIEVEMENTS_WEBHOOK_URL` | *(unset)* | Mirror ingest to Discord (separate from login). |
 | `INVITES_ENABLED` | `0` | `1` to allow admin invite accounts. |
 | `BOOTSTRAP_ADMIN_DISCORD_ID` / `BOOTSTRAP_ADMIN_USERNAME` | | Force admin on matching login. |
 | `SECURE_COOKIES` | auto | On when `HOST` is not loopback. |
@@ -387,8 +386,9 @@ docker compose exec app python backfill_history.py
 docker compose --profile tunnel up -d tunnel   # when cutting over public traffic
 ```
 
-`CLAN_PASSWORD` is required when `HOST` is not loopback (Compose sets
-`HOST=0.0.0.0`).
+Discord OAuth (`CLIENT_ID` / `SECRET` / `REDIRECT_URI`) and/or
+`INVITES_ENABLED=1` is required when `HOST` is not loopback (Compose sets
+`HOST=0.0.0.0` and defaults invites on).
 
 ### Split roles (optional)
 

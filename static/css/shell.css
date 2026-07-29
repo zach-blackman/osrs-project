@@ -113,12 +113,52 @@ a { color: var(--accent); }
 }
 .shell-user-admin:hover { text-decoration: underline; }
 .shell-logout-form { margin: 0; }
-.shell-logout {
+.shell-logout, .shell-signin {
   border: 1px solid var(--line2); background: var(--surface); color: var(--muted);
   font-size: 11px; font-weight: 600; padding: 6px 8px; min-height: 32px;
   border-radius: 2px; cursor: pointer;
 }
-.shell-logout:hover { border-color: var(--accent); color: var(--accent); }
+.shell-logout:hover, .shell-signin:hover { border-color: var(--accent); color: var(--accent); }
+.shell-signin {
+  color: var(--ink); border-color: var(--accent);
+}
+
+.shell-auth-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(15, 20, 18, 0.6);
+}
+.shell-auth-backdrop[hidden], .shell-auth-modal[hidden] { display: none !important; }
+.shell-auth-modal {
+  position: fixed; z-index: 110;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(360px, calc(100vw - 32px));
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink);
+  padding: 24px 22px 20px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.shell-auth-modal h2 {
+  margin: 0 0 6px; font: 700 1.15rem/1.25 var(--sans); letter-spacing: -0.02em;
+}
+.shell-auth-blurb, .shell-auth-note {
+  margin: 0 0 16px; color: var(--muted); font-size: 13.5px; line-height: 1.45;
+}
+.shell-auth-actions { display: flex; flex-direction: column; gap: 10px; }
+.shell-auth-discord {
+  display: block; text-align: center; text-decoration: none;
+  background: #5865F2; color: #fff; font-weight: 600; font-size: 14px;
+  padding: 12px; min-height: 44px; border-radius: 2px;
+}
+.shell-auth-discord:hover { filter: brightness(1.06); }
+.shell-auth-secondary {
+  display: block; text-align: center; color: var(--muted); font-size: 13px;
+  text-decoration: none; padding: 8px;
+}
+.shell-auth-secondary:hover { color: var(--accent); text-decoration: underline; }
+.shell-auth-close {
+  position: absolute; top: 8px; right: 10px;
+  border: 0; background: transparent; color: var(--faint);
+  font-size: 22px; line-height: 1; cursor: pointer; padding: 4px 8px;
+}
+.shell-auth-close:hover { color: var(--ink); }
 
 #tool-slot {
   flex: 1 1 auto; min-height: 0; min-width: 0;

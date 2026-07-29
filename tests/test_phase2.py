@@ -16,7 +16,6 @@ sys.path.insert(0, str(HERE.parent))
 _TMP = tempfile.mkdtemp(prefix="osrs-phase2-")
 os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(_TMP, "phase2.db")
 os.environ["SCAN_ON_STARTUP"] = "0"
-os.environ["CLAN_PASSWORD"] = ""
 os.environ["SLEEP"] = "0"
 os.environ["FAST_SCAN"] = "1"
 os.environ["MIN_HISTORY_READY"] = "2"

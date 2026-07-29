@@ -15,7 +15,6 @@ sys.path.insert(0, str(HERE.parent))
 _TMP = tempfile.mkdtemp(prefix="osrs-identity-")
 os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(_TMP, "id.db")
 os.environ["SCAN_ON_STARTUP"] = "0"
-os.environ["CLAN_PASSWORD"] = ""
 os.environ["INVITES_ENABLED"] = "1"
 os.environ["SECRET_KEY"] = "test-secret-key-identity"
 os.environ["FAST_SCAN"] = "0"
@@ -64,6 +63,7 @@ def main():
     me = client.get("/api/me")
     check(me.status_code == 200 and me.json()["user"]["username"] == "bob",
           "/api/me returns bob")
+    check(me.json()["user"]["role"] == "user", "invite claim defaults role=user")
 
     print("\nprefs + watchlist")
     pr = client.put("/api/me/prefs", json={"capital": "1.5b", "floor": "2m"})
@@ -94,7 +94,7 @@ def main():
 
     print("\nscan ACL")
     scan = client.post("/api/refresh")
-    check(scan.status_code == 403, "member cannot Scan")
+    check(scan.status_code == 403, "user cannot Scan")
     # promote bob? use admin session
     admin_client = TestClient(web.app)
     login = admin_client.post("/login", data={

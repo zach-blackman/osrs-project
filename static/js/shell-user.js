@@ -1,4 +1,4 @@
-/* Shell user chip: avatar/name, sign out, admin link, hydrate from /api/me. */
+/* Shell user chip: sign-in modal, avatar/name, sign out, admin link, hydrate from /api/me. */
 (function (global) {
   "use strict";
 
@@ -15,12 +15,71 @@
     actions.insertBefore(wrap, actions.firstChild);
   }
 
+  function ensureModal() {
+    if ($("shell-auth-modal")) return;
+    var backdrop = document.createElement("div");
+    backdrop.id = "shell-auth-backdrop";
+    backdrop.className = "shell-auth-backdrop";
+    backdrop.setAttribute("hidden", "");
+    var modal = document.createElement("div");
+    modal.id = "shell-auth-modal";
+    modal.className = "shell-auth-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "shell-auth-title");
+    modal.setAttribute("hidden", "");
+    modal.innerHTML =
+      '<button type="button" class="shell-auth-close" aria-label="Close">&times;</button>' +
+      '<h2 id="shell-auth-title">Sign in</h2>' +
+      '<p class="shell-auth-blurb">Use Discord to verify you are a real person and open your profile.</p>' +
+      '<div class="shell-auth-actions"></div>';
+    document.body.appendChild(backdrop);
+    document.body.appendChild(modal);
+    backdrop.addEventListener("click", closeModal);
+    modal.querySelector(".shell-auth-close").addEventListener("click", closeModal);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !$("shell-auth-modal").hasAttribute("hidden")) {
+        closeModal();
+      }
+    });
+  }
+
+  function openModal() {
+    ensureModal();
+    var auth = (ME && ME.auth) || {};
+    var actions = $("shell-auth-modal").querySelector(".shell-auth-actions");
+    var html = "";
+    if (auth.discord) {
+      html += '<a class="shell-auth-discord" href="/auth/discord">Continue with Discord</a>';
+    } else {
+      html += '<p class="shell-auth-note">Discord sign-in is not configured on this server.</p>';
+    }
+    if (auth.invites) {
+      html += '<a class="shell-auth-secondary" href="/login">Use invite account</a>';
+    }
+    actions.innerHTML = html;
+    $("shell-auth-backdrop").removeAttribute("hidden");
+    $("shell-auth-modal").removeAttribute("hidden");
+    var focusEl = actions.querySelector("a, button");
+    if (focusEl) focusEl.focus();
+  }
+
+  function closeModal() {
+    var backdrop = $("shell-auth-backdrop");
+    var modal = $("shell-auth-modal");
+    if (backdrop) backdrop.setAttribute("hidden", "");
+    if (modal) modal.setAttribute("hidden", "");
+  }
+
   function render() {
     ensureSlot();
     var el = $("shell-user");
     if (!el) return;
     if (!ME || !ME.user) {
-      el.innerHTML = "";
+      el.innerHTML =
+        '<button type="button" class="shell-signin" id="shell-signin">Sign in</button>';
+      var btn = $("shell-signin");
+      if (btn) btn.addEventListener("click", openModal);
       return;
     }
     var u = ME.user;
@@ -28,7 +87,7 @@
       ? '<a class="shell-user-admin" href="/admin">Admin</a>' : "";
     el.innerHTML =
       '<span class="shell-user-name" title="' + (u.username || "") + '">' +
-      (u.username || "member") + "</span>" +
+      (u.username || "user") + "</span>" +
       admin +
       '<form method="post" action="/logout" class="shell-logout-form">' +
       '<button type="submit" class="shell-logout" title="Sign out" aria-label="Sign out">Out</button></form>';
@@ -57,5 +116,10 @@
     init();
   }
 
-  global.ClanShellUser = { load: load, me: function () { return ME; } };
+  global.ClanShellUser = {
+    load: load,
+    me: function () { return ME; },
+    openSignIn: openModal,
+    closeSignIn: closeModal,
+  };
 })(window);

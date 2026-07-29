@@ -66,21 +66,18 @@ DEFAULT_FLOOR = _int("DEFAULT_FLOOR", 500_000)
 # Alch Desk: nature-rune cost when the client does not pass nature=.
 DEFAULT_NATURE_COST = _int("DEFAULT_NATURE_COST", 100)
 
-# Auth. Unset means the app is open — fine on localhost, not on the internet.
-CLAN_PASSWORD = os.environ.get("CLAN_PASSWORD", "").strip()
+# Auth. Unset Discord + invites means the app is open — fine on localhost only.
 SECRET_KEY = os.environ.get("SECRET_KEY", "").strip()
 
-# Discord OAuth (optional). All three required to enable the Discord login path.
+# Discord OAuth as identity provider (like Google Sign-In). All three required.
 DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "").strip()
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "").strip()
 DISCORD_REDIRECT_URI = os.environ.get(
     "DISCORD_REDIRECT_URI", "").strip()  # e.g. https://host/auth/discord/callback
-DISCORD_GUILD_ID = os.environ.get("DISCORD_GUILD_ID", "").strip()
-DISCORD_REQUIRED_ROLE_ID = os.environ.get("DISCORD_REQUIRED_ROLE_ID", "").strip()
 DISCORD_ACHIEVEMENTS_WEBHOOK_URL = os.environ.get(
     "DISCORD_ACHIEVEMENTS_WEBHOOK_URL", "").strip()
 
-# Invite accounts for Discord-less members.
+# Invite accounts for users without Discord (admin-created).
 INVITES_ENABLED = os.environ.get("INVITES_ENABLED", "0") not in ("0", "false", "")
 
 # Bootstrap first admin (optional).
@@ -112,7 +109,7 @@ if UA != scanner.UA:
 
 
 def discord_configured():
-    return bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_GUILD_ID)
+    return bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI)
 
 
 def auth_providers_active():
@@ -121,8 +118,8 @@ def auth_providers_active():
 
 
 def auth_required():
-    """Off-loopback / middleware: need a provider or legacy clan password."""
-    return auth_providers_active() or bool(CLAN_PASSWORD)
+    """Middleware: require a signed-in user when any auth provider is configured."""
+    return auth_providers_active()
 
 
 def is_loopback():
@@ -132,17 +129,14 @@ def is_loopback():
 def assert_deploy_safe():
     """Refuse to start an open app on a non-loopback bind."""
     if not is_loopback() and not auth_required():
-        print("FATAL: set Discord OAuth, INVITES_ENABLED=1, or CLAN_PASSWORD "
-              f"when HOST is not loopback (HOST={HOST!r}). Refusing to start.",
+        print("FATAL: set Discord OAuth (CLIENT_ID/SECRET/REDIRECT_URI) or "
+              f"INVITES_ENABLED=1 when HOST is not loopback (HOST={HOST!r}). "
+              "Refusing to start.",
               file=sys.stderr)
         raise SystemExit(2)
     if ROLE not in ("all", "api", "writer"):
         print(f"FATAL: ROLE must be all|api|writer (got {ROLE!r}).",
               file=sys.stderr)
-        raise SystemExit(2)
-    if discord_configured() and not DISCORD_REDIRECT_URI:
-        print("FATAL: DISCORD_REDIRECT_URI is required when Discord OAuth is "
-              "configured.", file=sys.stderr)
         raise SystemExit(2)
     if auth_providers_active() and not SECRET_KEY:
         print("WARNING: SECRET_KEY unset — set it so sessions survive restarts.",

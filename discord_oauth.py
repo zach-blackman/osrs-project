@@ -1,4 +1,7 @@
-"""Discord OAuth helpers (stdlib + requests)."""
+"""Discord OAuth helpers (stdlib + requests).
+
+Discord is used as an identity provider only (identify scope) — not guild-gated.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +14,6 @@ import config
 API = "https://discord.com/api/v10"
 TOKEN_URL = f"{API}/oauth2/token"
 USER_URL = f"{API}/users/@me"
-GUILDS_URL = f"{API}/users/@me/guilds"
-GUILD_MEMBER_URL = f"{API}/users/@me/guilds/{{guild_id}}/member"
 
 
 def authorize_url(state: str) -> str:
@@ -20,7 +21,7 @@ def authorize_url(state: str) -> str:
         "client_id": config.DISCORD_CLIENT_ID,
         "redirect_uri": config.DISCORD_REDIRECT_URI,
         "response_type": "code",
-        "scope": "identify guilds",
+        "scope": "identify",
         "state": state,
     })
     return f"https://discord.com/api/oauth2/authorize?{q}"
@@ -43,27 +44,6 @@ def fetch_user(access_token: str) -> dict:
                      timeout=20)
     r.raise_for_status()
     return r.json()
-
-
-def user_in_guild(access_token: str, guild_id: str) -> bool:
-    r = requests.get(GUILDS_URL, headers={"Authorization": f"Bearer {access_token}"},
-                     timeout=20)
-    r.raise_for_status()
-    return any(str(g.get("id")) == str(guild_id) for g in r.json())
-
-
-def user_has_role(access_token: str, guild_id: str, role_id: str) -> bool:
-    if not role_id:
-        return True
-    url = GUILD_MEMBER_URL.format(guild_id=guild_id)
-    r = requests.get(url, headers={"Authorization": f"Bearer {access_token}"},
-                     timeout=20)
-    if r.status_code == 403:
-        # Missing guilds.members.read — fall back to guild membership only.
-        return True
-    r.raise_for_status()
-    roles = r.json().get("roles") or []
-    return str(role_id) in [str(x) for x in roles]
 
 
 def display_name(user: dict) -> str:

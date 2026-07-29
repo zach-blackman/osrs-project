@@ -21,7 +21,7 @@ users = sa.Table(
     sa.Column("username", sa.String(128), nullable=False),
     sa.Column("avatar_hash", sa.String(64)),
     sa.Column("password_hash", sa.Text),
-    sa.Column("role", sa.String(16), nullable=False, server_default="member"),
+    sa.Column("role", sa.String(16), nullable=False, server_default="user"),
     sa.Column("ingest_token_hash", sa.String(64)),
     sa.Column("ingest_token_prefix", sa.String(16)),
     sa.Column("disabled_at", sa.Float),
@@ -150,16 +150,26 @@ def count_users():
         return cx.execute(sa.select(sa.func.count()).select_from(users)).scalar() or 0
 
 
+def migrate_member_roles_to_user(eng=None):
+    """One-shot: rename legacy role 'member' → 'user'."""
+    eng = eng or _engine()
+    insp = sa.inspect(eng)
+    if "users" not in insp.get_table_names():
+        return
+    with eng.begin() as cx:
+        cx.execute(sa.text("UPDATE users SET role='user' WHERE role='member'"))
+
+
 def list_users():
     with _engine().connect() as cx:
         return [_user_dict(r) for r in cx.execute(
             sa.select(users).order_by(users.c.id)).mappings()]
 
 
-def create_user(*, username, role="member", discord_id=None, avatar_hash=None,
+def create_user(*, username, role="user", discord_id=None, avatar_hash=None,
                 password_hash=None):
     now = time.time()
-    if role == "member" and count_users() == 0:
+    if role == "user" and count_users() == 0:
         role = "admin"
     if (config.BOOTSTRAP_ADMIN_DISCORD_ID and discord_id
             and str(discord_id) == str(config.BOOTSTRAP_ADMIN_DISCORD_ID)):
