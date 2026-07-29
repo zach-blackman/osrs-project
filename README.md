@@ -39,7 +39,8 @@ Public site: **https://scan.wiseoldtools.com**
 | `analysis.py` | Dip/flip/risk heuristics layered on ranked rows (also on `/api/picks`). |
 | `config.py` | All env vars, read once at import. |
 | `static/tools/achievements.html` | Achievements Desk feed + ingest token UI. |
-| `static/tools/admin.html` | Admin invites + member disable. |
+| `static/tools/account.html` | My Account — Discord profile + clan prefs. |
+| `static/tools/admin.html` | Admin invites + searchable members. |
 | `static/tools/merch.html` | Merch Desk page (shell chrome + desk body). |
 | `static/tools/alch.html` | Alch Desk scaffold. |
 | `static/tools/movers.html` | Movers Desk scaffold. |
@@ -87,6 +88,10 @@ Set `SECRET_KEY` whenever providers are on. New accounts default to role
 `user`. Bootstrap admin via first user, `BOOTSTRAP_ADMIN_DISCORD_ID`, or
 `BOOTSTRAP_ADMIN_USERNAME`.
 
+After Discord (or invite) sign-in, an opaque HttpOnly `clan_session` cookie
+keeps you signed in for 30 days of activity (sliding). Discord OAuth is not
+required on every visit — only after logout, disable, or idle expiry.
+
 Manual **Scan** is **admin-only** when Discord/invites are enabled.
 
 ### RuneLite achievements ingest
@@ -119,15 +124,17 @@ Optional `DISCORD_ACHIEVEMENTS_WEBHOOK_URL` mirrors posts to the clan channel.
 | `/` | Redirects to `/merch`. |
 | `/merch` | Merch Desk. |
 | `/achievements` | Achievements Desk (live). |
-| `/admin` | Admin invites + users (admin role). |
+| `/account` | My Account — Discord profile + clan prefs. |
+| `/admin` | Admin invites + searchable members (admin role). |
 | `/alch` | Alch Desk scaffold. |
 | `/movers` | Movers Desk scaffold. |
 | `/login`, `/logout`, `/auth/discord`, `/invite/<token>` | Auth. |
 | `/static/...` | CSS/JS and other static assets. |
 | `/healthz` | Open (no auth). Ready only when a fresh ok snapshot exists. |
 
-**Shell** — hamburger drawer lists tools from `TOOLS` in `static/js/shell.js`.
-Signed-in chip + Sign out via `shell-user.js`. Emerald Ladder palette (dark
+**Shell** — hamburger drawer lists tools from `TOOLS` in `static/js/shell.js`
+and holds the light/dark theme toggle. Signed-in chip links to `/account`
+(+ Admin / Sign out) via `shell-user.js`. Emerald Ladder palette (dark
 default).
 
 **Merch Desk** — Cap/Floor/filters/watchlist sync to `/api/me` when signed in
@@ -308,6 +315,7 @@ Needs at least one ok snapshot in the DB. The same fields appear on
 |---|---|
 | `GET /api/me` | Profile, prefs, watchlist (null user when open). |
 | `PUT /api/me/prefs` | Cap/Floor/theme/filters. |
+| `PUT /api/me/profile` | Display name, RSN, theme (My Account). |
 | `PUT/DELETE /api/me/watchlist/{id}` | Watchlist + optional target alerts. |
 | `GET /api/me/alerts/active` | Watch targets crossed by latest pulse. |
 | `POST /api/me/ingest-token/rotate` | RuneLite bearer token (shown once). |
@@ -317,7 +325,7 @@ Needs at least one ok snapshot in the DB. The same fields appear on
 | `GET /api/achievements` | Clan achievements feed. |
 | `POST /api/achievements/ingest` | RuneLite bearer ingest. |
 | `POST /api/admin/invites` | Admin: create invite. |
-| `GET /api/admin/users` | Admin: list members. |
+| `GET /api/admin/users?q=&page=&per_page=&status=` | Admin: searchable members. |
 | `GET /api/status` | Snapshot age, next run, scanning flag, readiness hints. |
 | `POST /api/refresh` | Trigger shared scan (admin when providers on). |
 | `GET /api/refresh/stream` | SSE `phase` / `log` / `progress` / `result`. |

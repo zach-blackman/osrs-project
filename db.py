@@ -146,11 +146,16 @@ def _migrate_missing_columns(eng):
     """create_all only creates missing TABLES, not missing COLUMNS on tables
     that already exist. New columns are added here so existing DBs upgrade
     without a wipe."""
+    import userdb  # noqa: F401 — identity tables on metadata
     inspector = sa.inspect(eng)
     tables = inspector.get_table_names()
     migrations = (
         ("picks", picks, ("buy_vol_1h", "sell_vol_1h")),
         ("items", items, ("highalch", "value")),
+        ("users", userdb.users,
+         ("discord_username", "display_name", "rsn")),
+        ("sessions", userdb.sessions,
+         ("created_at", "last_seen_at", "user_agent")),
     )
     with eng.begin() as cx:
         for table_name, table, allowed in migrations:

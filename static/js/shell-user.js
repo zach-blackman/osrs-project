@@ -6,6 +6,12 @@
 
   function $(id) { return document.getElementById(id); }
 
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
   function ensureSlot() {
     var actions = document.querySelector(".shell-actions");
     if (!actions || $("shell-user")) return;
@@ -83,11 +89,16 @@
       return;
     }
     var u = ME.user;
+    var name = u.effective_name || u.username || "user";
     var admin = u.role === "admin"
       ? '<a class="shell-user-admin" href="/admin">Admin</a>' : "";
+    var avatar = u.avatar_url
+      ? '<img class="shell-user-avatar" src="' + esc(u.avatar_url) + '" alt="" width="24" height="24">'
+      : "";
     el.innerHTML =
-      '<span class="shell-user-name" title="' + (u.username || "") + '">' +
-      (u.username || "user") + "</span>" +
+      '<a class="shell-user-link" href="/account" title="My Account">' +
+      avatar +
+      '<span class="shell-user-name">' + esc(name) + "</span></a>" +
       admin +
       '<form method="post" action="/logout" class="shell-logout-form">' +
       '<button type="submit" class="shell-logout" title="Sign out" aria-label="Sign out">Out</button></form>';

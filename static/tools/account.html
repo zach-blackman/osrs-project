@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Admin — Clan Tools</title>
+<title>My Account — Clan Tools</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/shell.css">
-<link rel="stylesheet" href="/static/css/admin.css">
+<link rel="stylesheet" href="/static/css/account.css">
 </head>
-<body class="shell-body" data-tool="admin">
+<body class="shell-body" data-tool="account">
 
   <div id="nav-backdrop" aria-hidden="true"></div>
   <aside id="nav-drawer" aria-hidden="true" aria-label="Tools">
@@ -30,7 +30,7 @@
         </svg>
         <span class="theme-toggle-label">Appearance</span>
       </button>
-      <div class="nav-drawer-blurb">Admin — invites and members.</div>
+      <div class="nav-drawer-blurb">Your Discord profile and clan preferences.</div>
     </div>
   </aside>
 
@@ -40,44 +40,51 @@
     </button>
     <div class="shell-brand">
       <div class="name">Clan <em>Tools</em></div>
-      <div class="sub">Admin</div>
+      <div class="sub">My Account</div>
     </div>
     <div id="tool-chrome"></div>
     <div class="shell-actions"></div>
   </header>
 
   <div id="tool-slot">
-    <div class="admin-wrap">
-      <section>
-        <h1>Invites</h1>
-        <p class="lede">Create a one-time invite for users without Discord.</p>
-        <button type="button" id="mk-invite" class="primary">Create invite</button>
-        <pre id="invite-out" class="out" hidden></pre>
+    <div class="account-wrap">
+      <section class="account-profile" id="account-profile">
+        <h1>Profile</h1>
+        <p class="lede">Signed in via Discord. These fields come from your identity provider.</p>
+        <div class="account-profile-card" id="profile-card">loading…</div>
       </section>
-      <section>
-        <h1>Members</h1>
-        <p class="lede">Search by name, Discord ID, or RSN.</p>
-        <div class="member-controls">
-          <input id="member-q" type="search" placeholder="Search members…" autocomplete="off">
-          <select id="member-status" aria-label="Status filter">
-            <option value="all">All</option>
-            <option value="active">Active</option>
-            <option value="disabled">Disabled</option>
-          </select>
-        </div>
-        <div id="member-summary" class="member-summary"></div>
-        <div id="user-list" class="user-list">loading…</div>
-        <div class="member-pager" id="member-pager" hidden>
-          <button type="button" id="member-prev">Previous</button>
-          <span id="member-page-label"></span>
-          <button type="button" id="member-next">Next</button>
-        </div>
+      <section class="account-prefs">
+        <h1>Clan prefs</h1>
+        <p class="lede">Optional overrides used across Clan Tools.</p>
+        <form id="prefs-form" class="prefs-form">
+          <label>
+            <span>Display name</span>
+            <input id="pref-display-name" type="text" maxlength="128" autocomplete="nickname"
+                   placeholder="Leave blank to use Discord name">
+          </label>
+          <label>
+            <span>RSN</span>
+            <input id="pref-rsn" type="text" maxlength="12" autocomplete="off"
+                   placeholder="Old School RuneScape name">
+          </label>
+          <label>
+            <span>Theme</span>
+            <select id="pref-theme">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </label>
+          <div class="prefs-actions">
+            <button type="submit" class="primary" id="prefs-save">Save</button>
+            <span class="prefs-status" id="prefs-status" hidden></span>
+          </div>
+        </form>
       </section>
     </div>
   </div>
 
 <script src="/static/js/shell.js"></script>
 <script src="/static/js/shell-user.js"></script>
-<script src="/static/js/admin.js"></script>
+<script src="/static/js/account.js"></script>
 </body>
 </html>

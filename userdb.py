@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
@@ -14,11 +15,16 @@ import db
 
 metadata = db.metadata
 
+SESSION_SLIDE_INTERVAL_SEC = 5 * 60
+
 users = sa.Table(
     "users", metadata,
     sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
     sa.Column("discord_id", sa.String(32), unique=True),
     sa.Column("username", sa.String(128), nullable=False),
+    sa.Column("discord_username", sa.String(64)),
+    sa.Column("display_name", sa.String(128)),
+    sa.Column("rsn", sa.String(64)),
     sa.Column("avatar_hash", sa.String(64)),
     sa.Column("password_hash", sa.Text),
     sa.Column("role", sa.String(16), nullable=False, server_default="user"),
@@ -45,6 +51,9 @@ sessions = sa.Table(
     sa.Column("user_id", sa.Integer,
               sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     sa.Column("expires_at", sa.Float, nullable=False),
+    sa.Column("created_at", sa.Float),
+    sa.Column("last_seen_at", sa.Float),
+    sa.Column("user_agent", sa.String(256)),
     sa.Index("ix_sessions_user", "user_id"),
 )
 
@@ -103,13 +112,60 @@ def _engine():
     return db.engine()
 
 
+def _iso(ts):
+    if ts is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def avatar_url(discord_id, avatar_hash):
+    if not discord_id:
+        return None
+    if avatar_hash:
+        return (f"https://cdn.discordapp.com/avatars/{discord_id}/"
+                f"{avatar_hash}.png?size=128")
+    try:
+        idx = (int(discord_id) >> 22) % 6
+    except (TypeError, ValueError):
+        idx = 0
+    return f"https://cdn.discordapp.com/embed/avatars/{idx}.png"
+
+
+def effective_name(row):
+    if not row:
+        return None
+    return (row.get("display_name") or row.get("username")
+            or row.get("discord_username") or "user")
+
+
 def _user_dict(row):
+    """Public user payload: secrets stripped, ISO timestamps, derived fields."""
     if not row:
         return None
     d = dict(row)
     d.pop("password_hash", None)
     d.pop("ingest_token_hash", None)
     d.pop("expires_at", None)
+    d.pop("user_agent", None)
+    d.pop("_session_id", None)
+    d.pop("_session_expires_at", None)
+    d.pop("_session_last_seen_at", None)
+    # Session join columns — not part of the public user shape.
+    last_seen_raw = d.pop("last_seen_at", None)
+    created_raw = d.get("created_at")
+    login_raw = d.get("last_login_at")
+    disabled_raw = d.get("disabled_at")
+    d["created_at"] = _iso(created_raw)
+    d["last_login_at"] = _iso(login_raw)
+    d["disabled_at"] = _iso(disabled_raw) if disabled_raw else None
+    d["avatar_url"] = avatar_url(d.get("discord_id"), d.get("avatar_hash"))
+    d["effective_name"] = effective_name(d)
+    d["auth_provider"] = "discord" if d.get("discord_id") else "invite"
+    if last_seen_raw is not None:
+        d["last_seen_at"] = _iso(last_seen_raw)
     return d
 
 
@@ -166,8 +222,68 @@ def list_users():
             sa.select(users).order_by(users.c.id)).mappings()]
 
 
+def search_users(*, q="", page=1, per_page=25, status="all"):
+    """Paginated member search for admin. Returns (public_users, total)."""
+    page = max(1, int(page))
+    per_page = max(1, min(int(per_page), 100))
+    status = (status or "all").lower()
+    q = (q or "").strip()
+
+    last_seen = (
+        sa.select(
+            sessions.c.user_id,
+            sa.func.max(sessions.c.last_seen_at).label("last_seen_at"),
+        )
+        .group_by(sessions.c.user_id)
+        .subquery()
+    )
+
+    stmt = (
+        sa.select(users, last_seen.c.last_seen_at)
+        .select_from(
+            users.outerjoin(last_seen, users.c.id == last_seen.c.user_id))
+    )
+    count_stmt = sa.select(sa.func.count()).select_from(users)
+
+    if status == "active":
+        stmt = stmt.where(users.c.disabled_at.is_(None))
+        count_stmt = count_stmt.where(users.c.disabled_at.is_(None))
+    elif status == "disabled":
+        stmt = stmt.where(users.c.disabled_at.is_not(None))
+        count_stmt = count_stmt.where(users.c.disabled_at.is_not(None))
+
+    if q:
+        like = f"%{q}%"
+        # SQLite LIKE is case-insensitive for ASCII; Postgres uses ILIKE.
+        dialect = _engine().dialect.name
+        if dialect == "postgresql":
+            def match(col):
+                return col.ilike(like)
+        else:
+            def match(col):
+                return col.like(like)
+        clause = sa.or_(
+            match(users.c.username),
+            match(users.c.display_name),
+            match(users.c.discord_username),
+            match(users.c.discord_id),
+            match(users.c.rsn),
+        )
+        stmt = stmt.where(clause)
+        count_stmt = count_stmt.where(clause)
+
+    stmt = (stmt.order_by(users.c.id)
+            .offset((page - 1) * per_page)
+            .limit(per_page))
+
+    with _engine().connect() as cx:
+        total = cx.execute(count_stmt).scalar() or 0
+        rows = [_user_dict(r) for r in cx.execute(stmt).mappings()]
+    return rows, total
+
+
 def create_user(*, username, role="user", discord_id=None, avatar_hash=None,
-                password_hash=None):
+                password_hash=None, discord_username=None):
     now = time.time()
     if role == "user" and count_users() == 0:
         role = "admin"
@@ -180,6 +296,7 @@ def create_user(*, username, role="user", discord_id=None, avatar_hash=None,
         uid = cx.execute(sa.insert(users).values(
             discord_id=str(discord_id) if discord_id else None,
             username=username,
+            discord_username=discord_username,
             avatar_hash=avatar_hash,
             password_hash=password_hash,
             role=role,
@@ -198,18 +315,29 @@ def create_user(*, username, role="user", discord_id=None, avatar_hash=None,
     return get_user(uid)
 
 
-def upsert_discord_user(discord_id, username, avatar_hash=None):
+def upsert_discord_user(discord_id, username, avatar_hash=None,
+                        discord_username=None):
     existing = get_user_by_discord(discord_id)
     now = time.time()
     if existing:
+        values = {
+            "username": username,
+            "avatar_hash": avatar_hash,
+            "last_login_at": now,
+        }
+        if discord_username is not None:
+            values["discord_username"] = discord_username
         with _engine().begin() as cx:
-            cx.execute(sa.update(users).where(users.c.id == existing["id"]).values(
-                username=username, avatar_hash=avatar_hash, last_login_at=now))
+            cx.execute(sa.update(users).where(
+                users.c.id == existing["id"]).values(**values))
         return get_user(existing["id"])
-    return create_user(username=username, discord_id=discord_id, avatar_hash=avatar_hash)
+    return create_user(
+        username=username, discord_id=discord_id, avatar_hash=avatar_hash,
+        discord_username=discord_username)
 
 
-def link_discord(user_id, discord_id, username=None, avatar_hash=None):
+def link_discord(user_id, discord_id, username=None, avatar_hash=None,
+                 discord_username=None):
     other = get_user_by_discord(discord_id)
     if other and other["id"] != user_id:
         raise ValueError("discord already linked")
@@ -218,6 +346,21 @@ def link_discord(user_id, discord_id, username=None, avatar_hash=None):
         values["username"] = username
     if avatar_hash is not None:
         values["avatar_hash"] = avatar_hash
+    if discord_username is not None:
+        values["discord_username"] = discord_username
+    with _engine().begin() as cx:
+        cx.execute(sa.update(users).where(users.c.id == user_id).values(**values))
+    return get_user(user_id)
+
+
+def update_profile(user_id, *, display_name=None, rsn=None):
+    values = {}
+    if display_name is not None:
+        values["display_name"] = display_name or None
+    if rsn is not None:
+        values["rsn"] = rsn or None
+    if not values:
+        return get_user(user_id)
     with _engine().begin() as cx:
         cx.execute(sa.update(users).where(users.c.id == user_id).values(**values))
     return get_user(user_id)
@@ -242,29 +385,72 @@ def disable_user(user_id):
         cx.execute(sa.delete(sessions).where(sessions.c.user_id == user_id))
 
 
-def create_session(user_id, session_id, ttl_seconds=60 * 60 * 24 * 30):
+def create_session(user_id, session_id, ttl_seconds=60 * 60 * 24 * 30,
+                   user_agent=None):
+    now = time.time()
+    ua = (user_agent or "")[:256] or None
     with _engine().begin() as cx:
         cx.execute(sa.insert(sessions).values(
             id=session_id, user_id=user_id,
-            expires_at=time.time() + ttl_seconds))
+            expires_at=now + ttl_seconds,
+            created_at=now,
+            last_seen_at=now,
+            user_agent=ua))
 
 
 def get_session_user(session_id):
+    """Return raw user row + session meta, or None if invalid/expired.
+
+    Extra keys on the dict: `_session_id`, `_session_expires_at`,
+    `_session_last_seen_at` (for sliding refresh; stripped from public payloads).
+    """
     if not session_id:
         return None
     now = time.time()
     with _engine().connect() as cx:
         row = cx.execute(
-            sa.select(users, sessions.c.expires_at)
+            sa.select(
+                users,
+                sessions.c.expires_at.label("_session_expires_at"),
+                sessions.c.last_seen_at.label("_session_last_seen_at"),
+            )
             .select_from(sessions.join(users, sessions.c.user_id == users.c.id))
             .where(sessions.c.id == session_id)
         ).mappings().first()
     if not row:
         return None
-    if row["expires_at"] < now or row.get("disabled_at"):
+    d = dict(row)
+    if d["_session_expires_at"] < now or d.get("disabled_at"):
         delete_session(session_id)
         return None
-    return dict(row)
+    d["_session_id"] = session_id
+    return d
+
+
+def touch_session(session_id, ttl_seconds=60 * 60 * 24 * 30,
+                  min_interval=SESSION_SLIDE_INTERVAL_SEC):
+    """Slide session expiry / last_seen if enough time has passed.
+
+    Returns True when the row was updated (caller should refresh the cookie).
+    """
+    if not session_id:
+        return False
+    now = time.time()
+    with _engine().begin() as cx:
+        row = cx.execute(
+            sa.select(sessions.c.last_seen_at, sessions.c.expires_at)
+            .where(sessions.c.id == session_id)
+        ).mappings().first()
+        if not row:
+            return False
+        last = row["last_seen_at"] or 0
+        if now - last < min_interval:
+            return False
+        cx.execute(sa.update(sessions).where(sessions.c.id == session_id).values(
+            last_seen_at=now,
+            expires_at=now + ttl_seconds,
+        ))
+    return True
 
 
 def delete_session(session_id):
