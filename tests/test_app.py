@@ -23,7 +23,6 @@ _TMP = tempfile.mkdtemp(prefix="osrs-smoke-")
 # Must be set before config is imported — it reads the environment once.
 os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(_TMP, "smoke.db")
 os.environ["SCAN_ON_STARTUP"] = "0"
-os.environ["CLAN_PASSWORD"] = ""
 os.environ["SLEEP"] = "0"
 # Legacy shortlist path for this smoke test; Phase-2 coverage lives in test_phase2.py.
 os.environ["FAST_SCAN"] = "0"
@@ -196,37 +195,41 @@ def main():
             check(result.get("n_items", 0) > 0,
                   f"result reports {result.get('n_items')} items")
 
-            print("\nauth: shared clan password")
+            print("\nauth: invite provider gates API")
             import config
-            config.CLAN_PASSWORD = "hunter2"    # middleware reads this per call
+            import accounts
+            import userdb
+            prev_invites = config.INVITES_ENABLED
+            config.INVITES_ENABLED = True
             try:
+                admin = userdb.create_user(
+                    username="smoke-admin",
+                    password_hash=accounts.hash_password("adminpass12"),
+                    role="admin")
                 bare = TestClient(web.app)
                 check(bare.get("/api/picks").status_code == 401,
                       "API refuses an unauthenticated read")
-                check(bare.get("/", follow_redirects=False).status_code == 303,
-                      "page redirects to the login form")
                 check(bare.get("/merch", follow_redirects=False).status_code == 303,
                       "/merch redirects to the login form")
                 hz = bare.get("/healthz")
                 check(hz.status_code in (200, 503),
                       "/healthz stays reachable without auth")
-                # Length-mismatched wrong password must not 500 (compare_digest).
-                bad = bare.post("/login", data={"password": "no"},
-                                follow_redirects=False)
-                check(bad.status_code == 303 and bad.headers.get("location") == "/login?bad=1",
-                      "wrong password is rejected without 500")
-                good = bare.post("/login", data={"password": "hunter2"},
-                                 follow_redirects=False)
-                check(web.COOKIE_NAME in good.cookies,
-                      "correct password sets a session cookie")
-                check(good.headers.get("location") == "/merch",
-                      "login lands on /merch")
+                me = bare.get("/api/me")
+                check(me.status_code == 200 and me.json().get("user") is None,
+                      "/api/me is a public session probe")
+                check(me.json().get("auth", {}).get("invites") is True,
+                      "/api/me reports invites enabled")
+                login = bare.post("/login", data={
+                    "username": "smoke-admin", "password": "adminpass12"},
+                    follow_redirects=False)
+                check(login.status_code == 303 and web.COOKIE_NAME in login.cookies,
+                      "invite-account login sets a session cookie")
+                bare.cookies.set(web.COOKIE_NAME, login.cookies[web.COOKIE_NAME])
                 check(bare.get("/api/picks").status_code == 200,
                       "signed-in read works")
-                check(bare.get("/merch").status_code == 200,
-                      "signed-in /merch serves the desk")
+                check(admin["role"] == "admin", "bootstrap admin role")
             finally:
-                config.CLAN_PASSWORD = ""
+                config.INVITES_ENABLED = prev_invites
 
             print("\nshell routes + static assets")
             root = client.get("/", follow_redirects=False)

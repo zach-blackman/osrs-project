@@ -18,7 +18,6 @@ import userdb
 import worker
 
 COOKIE_NAME = config.SESSION_COOKIE
-LEGACY_COOKIE = "clan_session"
 
 _ACH_TYPES = {"drop", "collection_log", "combat_ach", "clue", "custom"}
 _ingest_hits = {}  # token_prefix -> [timestamps]
@@ -28,32 +27,9 @@ def auth_open_paths():
     return {
         "/login", "/healthz",
         "/auth/discord", "/auth/discord/callback",
+        "/api/me",
         "/api/achievements/ingest",
     }
-
-
-def _secret_bytes():
-    if config.SECRET_KEY:
-        return config.SECRET_KEY.encode()
-    raw = config.CLAN_PASSWORD or "dev-open"
-    return __import__("hashlib").sha256(
-        ("osrs-merch-scanner:" + raw).encode()).digest()
-
-
-def _legacy_token():
-    import hashlib
-    import hmac
-    return hmac.new(_secret_bytes(), b"clan-member", hashlib.sha256).hexdigest()
-
-
-def _password_ok(password: str) -> bool:
-    import hashlib
-    import hmac
-    if not config.CLAN_PASSWORD:
-        return False
-    left = hashlib.sha256(password.encode("utf-8")).digest()
-    right = hashlib.sha256(config.CLAN_PASSWORD.encode("utf-8")).digest()
-    return hmac.compare_digest(left, right)
 
 
 def current_user(request: Request):
@@ -77,7 +53,6 @@ def _set_session_cookie(resp, session_id: str):
 
 def _clear_session_cookie(resp):
     resp.delete_cookie(COOKIE_NAME)
-    resp.delete_cookie(LEGACY_COOKIE)
 
 
 def start_user_session(user_id: int):
@@ -88,21 +63,13 @@ def start_user_session(user_id: int):
 
 
 def resolve_request_user(request: Request):
-    """Attach request.state.user from session cookie (or legacy clan password)."""
+    """Attach request.state.user from the session cookie."""
     request.state.user = None
-    request.state.legacy_auth = False
     sid = request.cookies.get(COOKIE_NAME, "")
     if sid and config.auth_providers_active():
         row = userdb.get_session_user(sid)
         if row:
             request.state.user = row
-            return
-    # Legacy shared-password cookie when providers are off / clan password mode.
-    if config.CLAN_PASSWORD and not config.auth_providers_active():
-        got = request.cookies.get(COOKIE_NAME, "") or request.cookies.get(LEGACY_COOKIE, "")
-        import hmac
-        if got and hmac.compare_digest(got, _legacy_token()):
-            request.state.legacy_auth = True
             return
 
 
@@ -110,8 +77,6 @@ def needs_login(request: Request) -> bool:
     if not config.auth_required():
         return False
     if current_user(request):
-        return False
-    if request.state.legacy_auth:
         return False
     return True
 
@@ -121,7 +86,9 @@ def login_html(*, error: str = "", invite_token: str = "") -> str:
     if config.discord_configured():
         discord_btn = (
             '<a class="btn discord" href="/auth/discord">Continue with Discord</a>'
-            '<div class="or">or</div>')
+        )
+        if config.INVITES_ENABLED or invite_token:
+            discord_btn += '<div class="or">or</div>'
     invite_block = ""
     if config.INVITES_ENABLED or invite_token:
         action = f"/invite/{invite_token}" if invite_token else "/login"
@@ -133,18 +100,15 @@ def login_html(*, error: str = "", invite_token: str = "") -> str:
          autocomplete="{"new-password" if invite_token else "current-password"}" required>
   <button type="submit">{"Create account" if invite_token else "Sign in with invite account"}</button>
 </form>"""
-    legacy = ""
-    if config.CLAN_PASSWORD and not config.auth_providers_active():
-        legacy = """
-<form method="post" action="/login">
-  <input type="password" name="password" placeholder="Clan password" autofocus
-         autocomplete="current-password">
-  <button type="submit">Sign in</button>
-</form>"""
     err = f'<div class="err">{error}</div>' if error else ""
-    blurb = "Clan members only — Discord or an admin invite."
-    if not config.auth_providers_active() and config.CLAN_PASSWORD:
-        blurb = "Clan members only. Shared snapshot tools — start with Merch Desk."
+    if invite_token:
+        blurb = "Create your account with this invite."
+    elif config.discord_configured():
+        blurb = "Sign in with Discord to use Clan Tools."
+    elif config.INVITES_ENABLED:
+        blurb = "Sign in with an invite account, or ask an admin for an invite link."
+    else:
+        blurb = "Sign-in is not configured on this server."
     return f"""<!doctype html><html lang="en" data-theme="dark"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Clan Tools — sign in</title>
@@ -180,7 +144,6 @@ button:hover,.btn:hover{{filter:brightness(1.06)}}
   <p>{blurb}</p>
   {discord_btn}
   {invite_block}
-  {legacy}
   {err}
 </div>"""
 
@@ -213,9 +176,8 @@ def register(app, *, tool_html, gp_parse):
     """Attach identity routes to the FastAPI app."""
 
     @app.get("/login", response_class=HTMLResponse)
-    def login_page(bad: int = 0, error: str = ""):
-        msg = error or ("Wrong password." if bad else "")
-        return login_html(error=msg)
+    def login_page(error: str = ""):
+        return login_html(error=error)
 
     @app.post("/login")
     async def login_submit(request: Request):
@@ -235,16 +197,6 @@ def register(app, *, tool_html, gp_parse):
                 return resp
             return HTMLResponse(login_html(error="Invalid username or password."),
                                 status_code=401)
-
-        # Legacy shared clan password
-        if config.CLAN_PASSWORD and not config.auth_providers_active():
-            if not _password_ok(password):
-                return RedirectResponse("/login?bad=1", status_code=303)
-            resp = RedirectResponse("/merch", status_code=303)
-            resp.set_cookie(
-                COOKIE_NAME, _legacy_token(), max_age=config.SESSION_TTL_SEC,
-                httponly=True, samesite="lax", secure=config.SECURE_COOKIES)
-            return resp
 
         return HTMLResponse(login_html(error="Sign-in not configured."), status_code=400)
 
@@ -279,15 +231,6 @@ def register(app, *, tool_html, gp_parse):
             tok = discord_oauth.exchange_code(code)
             access = tok["access_token"]
             du = discord_oauth.fetch_user(access)
-            if not discord_oauth.user_in_guild(access, config.DISCORD_GUILD_ID):
-                return HTMLResponse(
-                    login_html(error="You must be in the clan Discord server."),
-                    status_code=403)
-            if not discord_oauth.user_has_role(
-                    access, config.DISCORD_GUILD_ID, config.DISCORD_REQUIRED_ROLE_ID):
-                return HTMLResponse(
-                    login_html(error="Missing required Discord role."),
-                    status_code=403)
             user = userdb.upsert_discord_user(
                 du["id"], discord_oauth.display_name(du), du.get("avatar"))
             # Optional: link Discord onto existing invite session
@@ -341,7 +284,7 @@ def register(app, *, tool_html, gp_parse):
         user = userdb.create_user(
             username=username,
             password_hash=accounts.hash_password(password),
-            role="member")
+            role="user")
         userdb.claim_invite(accounts.hash_token(token), user["id"])
         sid = start_user_session(user["id"])
         resp = RedirectResponse("/merch", status_code=303)
@@ -375,13 +318,16 @@ def register(app, *, tool_html, gp_parse):
     def api_me(request: Request):
         user = current_user(request)
         if not user:
-            if not config.auth_required():
-                return {"user": None, "prefs": {}, "watchlist": [], "auth": {
+            return {
+                "user": None,
+                "prefs": {},
+                "watchlist": [],
+                "auth": {
                     "discord": config.discord_configured(),
                     "invites": config.INVITES_ENABLED,
-                    "open": True,
-                }}
-            return JSONResponse({"error": "not signed in"}, status_code=401)
+                    "open": not config.auth_required(),
+                },
+            }
         return _me_payload(user)
 
     @app.put("/api/me/prefs")
@@ -538,7 +484,7 @@ def register(app, *, tool_html, gp_parse):
                          type: str = Query(None),
                          min_value: int = Query(None),
                          top: int = Query(50, ge=1, le=200)):
-        if needs_login(request) and not current_user(request) and not request.state.legacy_auth:
+        if needs_login(request) and not current_user(request):
             return JSONResponse({"error": "not signed in"}, status_code=401)
         rows = userdb.list_achievements(
             user_id=user, event_type=type, min_value=min_value, top=top)

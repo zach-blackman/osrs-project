@@ -482,7 +482,7 @@ def main():
     db.init_db()
     if not config.auth_required():
         print("! Auth unset — the app is open to anyone who can reach it. "
-              "Fine on localhost; configure Discord, invites, or CLAN_PASSWORD "
+              "Fine on localhost; configure Discord OAuth or INVITES_ENABLED=1 "
               "before exposing the port.")
     elif config.auth_providers_active():
         print("Auth: Discord=%s invites=%s" % (

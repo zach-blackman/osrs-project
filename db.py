@@ -169,6 +169,7 @@ def init_db():
     eng = engine()
     metadata.create_all(eng)
     _migrate_missing_columns(eng)
+    userdb.migrate_member_roles_to_user(eng)
     if eng.dialect.name == "sqlite":
         with eng.begin() as cx:
             # WAL lets the reader serve requests while the writer commits.
