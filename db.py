@@ -165,6 +165,7 @@ def _migrate_missing_columns(eng):
 
 
 def init_db():
+    import userdb  # noqa: F401 — register identity tables on metadata
     eng = engine()
     metadata.create_all(eng)
     _migrate_missing_columns(eng)

@@ -1,18 +1,19 @@
 # Clan Tools — Merch Desk
 
-Clan web app for OSRS helpers. Today the live tool is **Merch Desk**, which
-ranks Grand Exchange flip opportunities from the wiki’s real-time prices.
-One shared scan serves the whole clan; each member’s capital and price floor
-are applied instantly at read time — the UI never calls the wiki.
+Clan web app for OSRS helpers. Live tools: **Merch Desk** (GE flips) and
+**Achievements** (RuneLite ingest feed). **Alch** / **Movers** are scaffolded
+(`soon`). Shared market scans stay capital-agnostic; Cap/Floor and watchlists
+personalise per signed-in member.
 
-**Alch Desk** and **Movers Desk** are scaffolded in the same shell (`soon` in
-the drawer; routes + APIs already wired). More tools plug in via
-`ClanShell.TOOLS`.
+Auth is dual: **Discord OAuth** (guild-gated) and/or **admin invites** for
+members without Discord. Shared `CLAN_PASSWORD` remains only when neither
+provider is configured (legacy / local).
 
 ```
   WRITER (only wiki caller)        DB (snapshots)           READER (stateless)
   scan every 10 min (FAST_SCAN) ─▶ scans + picks + history ─▶ GET /api/picks?capital=&floor=
-  + on-demand (single-flight)                               personalised + analysis per request
+  + on-demand (admin Scan)                                  + /api/me prefs / watchlist
+  RuneLite ─▶ POST /api/achievements/ingest ─▶ achievements ─▶ Achievements Desk
 ```
 
 **Default scan path is FAST_SCAN:** three bulk wiki calls + DB-backed daily
@@ -27,23 +28,23 @@ Public site: **https://scan.wiseoldtools.com**
 
 | Path | Role |
 |---|---|
-| `app.py` | FastAPI reader: auth, `/merch` UI, `/api/*`. Zero wiki calls. |
+| `app.py` | FastAPI reader: auth, desks, `/api/*`. Zero wiki calls. |
+| `identity.py` | Discord/invite login, `/api/me*`, achievements ingest, admin. |
+| `userdb.py` | Users, sessions, invites, prefs, watchlist, achievements. |
+| `accounts.py` | Password / token hashing helpers. |
+| `discord_oauth.py` | Discord authorize / token / guild checks. |
 | `worker.py` | Writer: APScheduler, single-flight scans, SSE fan-out, daily history rollover. |
 | `scanner.py` | `scan_market` / `scan_market_fast` (capital-agnostic) + `rank_for` (personalise). |
-| `db.py` | Snapshots, picks, `items` / `item_daily_history` / `item_snapshots`. SQLite or Postgres. |
+| `db.py` | Snapshots, picks, `items` / `item_daily_history` / `item_snapshots`. |
 | `analysis.py` | Dip/flip/risk heuristics layered on ranked rows (also on `/api/picks`). |
 | `config.py` | All env vars, read once at import. |
-| `backfill_history.py` | One-time resumable `/timeseries` → `item_daily_history` backfill. |
-| `predict_cli.py` | Terminal client for the prediction layer (same DB as the UI). |
+| `static/tools/achievements.html` | Achievements Desk feed + ingest token UI. |
+| `static/tools/admin.html` | Admin invites + member disable. |
 | `static/tools/merch.html` | Merch Desk page (shell chrome + desk body). |
 | `static/tools/alch.html` | Alch Desk scaffold. |
 | `static/tools/movers.html` | Movers Desk scaffold. |
-| `static/css/shell.css`, `static/js/shell.js` | Shared Clan Tools shell: drawer, theme, `TOOLS` registry. |
-| `static/js/tool-status.js` | Shared snapshot-age lamp for every desk. |
-| `static/css/merch.css`, `static/js/merch.js` | Merch Desk UI (desktop three-pane + mobile cards/sheets). |
-| `static/css/alch.css`, `static/js/alch.js` | Alch Desk stub UI. |
-| `static/css/movers.css`, `static/js/movers.js` | Movers Desk stub UI. |
-| `static/archive/` | Older UIs, not mounted as routes. |
+| `static/js/shell.js` / `shell-user.js` | Tool drawer + signed-in user chip. |
+| `tests/test_identity.py` | Invites, prefs, ingest, Scan ACL, alerts. |
 | `osrs_merch_scan.py` | Original standalone CLI/GUI (parity / history only). |
 
 ---
@@ -68,8 +69,45 @@ env FAST_SCAN=0 SHORTLIST=25 .venv/bin/python app.py
 Changing **Cap** / **Floor** re-ranks the snapshot already in the database.
 Only **Scan** hits the wiki.
 
-Open locally with no password (`CLAN_PASSWORD` unset). Binding off loopback
-requires a password — the process refuses to start otherwise.
+Open locally with no auth providers (`CLAN_PASSWORD` unset, Discord/invites
+off). Off-loopback requires Discord OAuth, `INVITES_ENABLED=1`, or
+`CLAN_PASSWORD`.
+
+---
+
+## Auth (Discord + invites)
+
+| Path | Config | Notes |
+|---|---|---|
+| Discord OAuth | `DISCORD_CLIENT_ID`, `CLIENT_SECRET`, `REDIRECT_URI`, `GUILD_ID` | Optional `DISCORD_REQUIRED_ROLE_ID` |
+| Invite accounts | `INVITES_ENABLED=1` | Admin creates `/invite/<token>` links |
+| Legacy shared password | `CLAN_PASSWORD` only when providers off | Anonymous clan cookie |
+
+Set `SECRET_KEY` whenever providers are on. Bootstrap admin via first user,
+`BOOTSTRAP_ADMIN_DISCORD_ID`, or `BOOTSTRAP_ADMIN_USERNAME`.
+
+Manual **Scan** is **admin-only** when Discord/invites are enabled.
+
+### RuneLite achievements ingest
+
+1. Sign in → Achievements Desk → **Rotate token** (copy once).
+2. Plugin `POST /api/achievements/ingest` with `Authorization: Bearer <token>`:
+
+```json
+{
+  "event_type": "drop",
+  "title": "Dragon warhammer",
+  "detail": "optional",
+  "item_id": 13576,
+  "value_gp": 40000000,
+  "rsn": "PlayerName",
+  "occurred_at": 1710000000,
+  "payload": {}
+}
+```
+
+`event_type` ∈ `drop` | `collection_log` | `combat_ach` | `clue` | `custom`.
+Optional `DISCORD_ACHIEVEMENTS_WEBHOOK_URL` mirrors posts to the clan channel.
 
 ---
 
@@ -78,26 +116,22 @@ requires a password — the process refuses to start otherwise.
 | Path | Purpose |
 |---|---|
 | `/` | Redirects to `/merch`. |
-| `/merch` | Merch Desk (Clan Tools shell + desk). |
-| `/alch` | Alch Desk scaffold (high-alch profits). |
-| `/movers` | Movers Desk scaffold (pulse movers). |
-| `/login`, `/logout` | Shared clan-password cookie session. |
+| `/merch` | Merch Desk. |
+| `/achievements` | Achievements Desk (live). |
+| `/admin` | Admin invites + users (admin role). |
+| `/alch` | Alch Desk scaffold. |
+| `/movers` | Movers Desk scaffold. |
+| `/login`, `/logout`, `/auth/discord`, `/invite/<token>` | Auth. |
 | `/static/...` | CSS/JS and other static assets. |
 | `/healthz` | Open (no auth). Ready only when a fresh ok snapshot exists. |
 
 **Shell** — hamburger drawer lists tools from `TOOLS` in `static/js/shell.js`.
-Live tools are links; `status: "soon"` shows a disabled badge. Sun/moon theme
-toggle (`merchdesk.theme`). Emerald Ladder palette (dark default).
+Signed-in chip + Sign out via `shell-user.js`. Emerald Ladder palette (dark
+default).
 
-**Merch Desk (desktop)** — filter rail · sortable table · item inspector.
-Cap/Floor and Scan in the top chrome; ticker shows session highlights.
-
-**Merch Desk (mobile, below 860px)** — card list; Filters / Cap / Floor / Scan in a
-compact bar; filters and item detail open as sheets. Nested `#cardwrap` scroll
-(shell stays locked).
-
-Prefs live in `localStorage` (`merch.capital`, `merch.floor`,
-`merchdesk.filters`, `merchdesk.watch`, `merchdesk.theme`).
+**Merch Desk** — Cap/Floor/filters/watchlist sync to `/api/me` when signed in
+(localStorage used as cache / offline fallback). Watch alerts banner when
+pulse crosses target buy/sell.
 
 ### Tool convention
 
@@ -114,15 +148,13 @@ Each Clan Tool follows the same shape:
 
 Shared snapshot age lamp: `static/js/tool-status.js` (`ClanToolStatus.refresh`).
 
-### Upcoming desks
+### Other desks
 
-| Desk | Question | API | Data |
-|---|---|---|---|
-| **Alch Desk** | What is profitable to high-alch? | `GET /api/alch?capital=&floor=&nature=&top=` | `items.highalch` + latest pulse / picks |
-| **Movers Desk** | What just moved or spiked in volume? | `GET /api/movers?window=&top=` | `item_snapshots` pulse only |
-
-Both stay `soon` in the drawer until their full UIs ship; routes and APIs work
-for local development now.
+| Desk | Status | API |
+|---|---|---|
+| **Achievements** | live | `GET /api/achievements`, `POST /api/achievements/ingest` |
+| **Alch Desk** | soon | `GET /api/alch?capital=&floor=&nature=&top=` |
+| **Movers Desk** | soon | `GET /api/movers?window=&top=` |
 ---
 
 ## Configuration
@@ -149,10 +181,15 @@ All optional; defaults suit a local single-instance run. Gp values accept
 | `SLEEP` | `0.6` | Per-item delay (legacy enrich + history gap-fill). |
 | `DEFAULT_CAPITAL` / `DEFAULT_FLOOR` | `700m` / `500k` | UI starting Cap/Floor. |
 | `DEFAULT_NATURE_COST` | `100` | Alch Desk nature-rune cost when `nature=` omitted. |
-| `CLAN_PASSWORD` | *(unset)* | Unset = open on loopback. Required off-loopback. |
-| `SECRET_KEY` | derived from password | Set to keep sessions across password changes. |
+| `CLAN_PASSWORD` | *(unset)* | Legacy shared password when Discord/invites off. |
+| `SECRET_KEY` | *(unset)* | Required for durable sessions with providers. |
+| `DISCORD_CLIENT_ID` / `SECRET` / `REDIRECT_URI` / `GUILD_ID` | | Discord OAuth. |
+| `DISCORD_REQUIRED_ROLE_ID` | *(unset)* | Optional role gate. |
+| `DISCORD_ACHIEVEMENTS_WEBHOOK_URL` | *(unset)* | Mirror ingest to Discord. |
+| `INVITES_ENABLED` | `0` | `1` to allow admin invite accounts. |
+| `BOOTSTRAP_ADMIN_DISCORD_ID` / `BOOTSTRAP_ADMIN_USERNAME` | | Force admin on matching login. |
 | `SECURE_COOKIES` | auto | On when `HOST` is not loopback. |
-| `HOST` / `PORT` | `127.0.0.1` / `8777` | Bind `0.0.0.0` only behind TLS + password. |
+| `HOST` / `PORT` | `127.0.0.1` / `8777` | Bind `0.0.0.0` only behind TLS + auth. |
 | `UA` | `merch-scanner - nekrosisx` | Wiki blocks the default requests agent. |
 
 `REFERENCE_BANKROLL` feeds prefilter capacity
@@ -270,14 +307,23 @@ Needs at least one ok snapshot in the DB. The same fields appear on
 
 | Endpoint | Purpose |
 |---|---|
+| `GET /api/me` | Profile, prefs, watchlist (null user when open). |
+| `PUT /api/me/prefs` | Cap/Floor/theme/filters. |
+| `PUT/DELETE /api/me/watchlist/{id}` | Watchlist + optional target alerts. |
+| `GET /api/me/alerts/active` | Watch targets crossed by latest pulse. |
+| `POST /api/me/ingest-token/rotate` | RuneLite bearer token (shown once). |
 | `GET /api/picks?capital=&floor=&top=&mode=` | Personalised ranking + analysis fields. `503` until first ok scan. |
-| `GET /api/alch?capital=&floor=&nature=&top=` | High-alch profit ranking (mapping `highalch` − buy − nature). |
-| `GET /api/movers?window=&top=` | Pulse movers: `%Δ` high/low + 1h volume spike vs recent median. |
+| `GET /api/alch?capital=&floor=&nature=&top=` | High-alch profit ranking. |
+| `GET /api/movers?window=&top=` | Pulse movers. |
+| `GET /api/achievements` | Clan achievements feed. |
+| `POST /api/achievements/ingest` | RuneLite bearer ingest. |
+| `POST /api/admin/invites` | Admin: create invite. |
+| `GET /api/admin/users` | Admin: list members. |
 | `GET /api/status` | Snapshot age, next run, scanning flag, readiness hints. |
-| `POST /api/refresh` | Trigger shared scan. Single-flight; debounce → **429**. |
+| `POST /api/refresh` | Trigger shared scan (admin when providers on). |
 | `GET /api/refresh/stream` | SSE `phase` / `log` / `progress` / `result`. |
 | `GET /api/scans?limit=` | Snapshot history. |
-| `GET /api/item/{id}/history?limit=` | Recent stored rows for one item (inspector chart). |
+| `GET /api/item/{id}/history?limit=` | Recent stored rows for one item. |
 | `GET /healthz` | Liveness always; HTTP 200 only when `ready`. |
 
 Readers never call the wiki. Only the writer does, on a schedule / Scan, with
@@ -290,6 +336,7 @@ the custom UA and retry/backoff.
 ```fish
 .venv/bin/python tests/test_parity.py     # split scanner vs frozen monolith
 .venv/bin/python tests/test_app.py        # storage, personalisation, SSE, auth, shell routes
+.venv/bin/python tests/test_identity.py   # invites, prefs, ingest, Scan ACL, alerts
 .venv/bin/python tests/test_analysis.py   # EMA/RSI + dip/risk thresholds
 .venv/bin/python tests/test_phase2.py     # history gate, degraded snapshots, rollover
 ```

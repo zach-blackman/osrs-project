@@ -7,15 +7,12 @@ same rows, instantly — which is the whole point of the migration.
 """
 
 import hashlib
-import hmac
 import json
 import logging
 import os
 import queue
 import re
-import secrets
 import time
-import urllib.parse
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
@@ -25,14 +22,16 @@ from fastapi.staticfiles import StaticFiles
 import analysis
 import config
 import db
+import identity
 import scanner
+import userdb  # noqa: F401 — register identity tables
 import worker
 
 log = logging.getLogger("osrs.app")
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-COOKIE_NAME = "clan_session"
-OPEN_PATHS = {"/login", "/healthz"}
+COOKIE_NAME = identity.COOKIE_NAME
+OPEN_PATHS = identity.auth_open_paths()
 
 app = FastAPI(title="Clan Tools", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -42,8 +41,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 _ASSET_REF = re.compile(r'((?:href|src)="/static/[^"?]+)(")')
 _STATIC_FINGERPRINT_FILES = (
     "css/shell.css", "css/merch.css", "css/alch.css", "css/movers.css",
+    "css/achievements.css", "css/admin.css",
     "js/shell.js", "js/merch.js", "js/alch.js", "js/movers.js",
-    "js/tool-status.js",
+    "js/tool-status.js", "js/achievements.js", "js/admin.js", "js/shell-user.js",
 )
 
 
@@ -59,108 +59,19 @@ async def _static_cache_headers(request: Request, call_next):
 
 # ---------------------------------------------------------------- auth
 
-def _secret():
-    """Signing key. Falls back to a key derived from the password so a
-    restart does not silently invalidate every cookie."""
-    if config.SECRET_KEY:
-        return config.SECRET_KEY.encode()
-    return hashlib.sha256(
-        ("osrs-merch-scanner:" + config.CLAN_PASSWORD).encode()).digest()
-
-
-def _token():
-    return hmac.new(_secret(), b"clan-member", hashlib.sha256).hexdigest()
-
-
-def _password_ok(password: str) -> bool:
-    """Constant-time compare that tolerates length mismatch (unlike raw
-    secrets.compare_digest on unequal strings, which raises ValueError)."""
-    if not config.CLAN_PASSWORD:
-        return False
-    left = hashlib.sha256(password.encode("utf-8")).digest()
-    right = hashlib.sha256(config.CLAN_PASSWORD.encode("utf-8")).digest()
-    return hmac.compare_digest(left, right)
-
-
-def _authed(request):
-    if not config.CLAN_PASSWORD:
-        return True                       # no password set: open (localhost)
-    got = request.cookies.get(COOKIE_NAME, "")
-    return bool(got) and hmac.compare_digest(got, _token())
-
-
 @app.middleware("http")
 async def require_login(request: Request, call_next):
+    identity.resolve_request_user(request)
     path = request.url.path
-    if config.CLAN_PASSWORD and path not in OPEN_PATHS and not path.startswith("/static/") \
-            and not _authed(request):
+    if (config.auth_required()
+            and path not in OPEN_PATHS
+            and not path.startswith("/static/")
+            and not path.startswith("/invite/")
+            and identity.needs_login(request)):
         if path.startswith("/api/"):
             return JSONResponse({"error": "not signed in"}, status_code=401)
         return RedirectResponse("/login", status_code=303)
     return await call_next(request)
-
-
-LOGIN_PAGE = """<!doctype html><html lang="en" data-theme="dark"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Clan Tools — sign in</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-:root{--bg:#0F1412;--panel:#16201C;--ink:#E6EDEA;--muted:#8FA399;--faint:#6B7F74;
-      --line:#24332C;--accent:#2FBF71;--surface:#121A16;--scan-fg:#0F1412;
-      --sans:"Source Sans 3","Helvetica Neue",sans-serif}
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;
-     background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);
-     padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right))
-             max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
-form{background:var(--panel);border:1px solid var(--line);padding:28px 26px;width:min(360px,92vw)}
-h1{margin:0 0 4px;font:700 1.45rem/1.2 var(--sans);letter-spacing:-.02em}
-h1 em{font-style:normal;color:var(--accent)}
-p{margin:0 0 18px;color:var(--muted);font-size:13.5px}
-input{width:100%;font:inherit;padding:12px;min-height:44px;border-radius:2px;
-      background:var(--surface);border:1px solid var(--line);color:var(--ink);outline:none}
-input:focus{border-color:var(--accent)}
-button{width:100%;margin-top:12px;font:inherit;font-weight:600;cursor:pointer;
-       padding:12px;min-height:44px;border:0;border-radius:2px;color:var(--scan-fg);background:var(--accent)}
-button:hover{filter:brightness(1.06)}
-.err{color:#E06A6A;font-size:13px;margin-top:10px}
-</style>
-<form method="post" action="/login">
-  <h1>Clan <em>Tools</em></h1>
-  <p>Clan members only. Shared snapshot tools — start with Merch Desk.</p>
-  <input type="password" name="password" placeholder="Clan password" autofocus autocomplete="current-password">
-  <button type="submit">Sign in</button>
-  %s
-</form>"""
-
-
-@app.get("/login", response_class=HTMLResponse)
-def login_page(bad: int = 0):
-    return LOGIN_PAGE % ('<div class="err">Wrong password.</div>' if bad else "")
-
-
-@app.post("/login")
-async def login_submit(request: Request):
-    # Parsed by hand: both fastapi.Form and request.form() require
-    # python-multipart, which is a lot of dependency for one urlencoded field.
-    body = (await request.body()).decode("utf-8", "replace")
-    password = urllib.parse.parse_qs(body).get("password", [""])[0]
-    if not _password_ok(password):
-        return RedirectResponse("/login?bad=1", status_code=303)
-    resp = RedirectResponse("/merch", status_code=303)
-    resp.set_cookie(
-        COOKIE_NAME, _token(), max_age=60 * 60 * 24 * 30,
-        httponly=True, samesite="lax", secure=config.SECURE_COOKIES)
-    return resp
-
-
-@app.post("/logout")
-def logout():
-    resp = RedirectResponse("/login", status_code=303)
-    resp.delete_cookie(COOKIE_NAME)
-    return resp
 
 
 # ------------------------------------------------------------- lifecycle
@@ -253,10 +164,14 @@ def api_status():
 
 
 @app.post("/api/refresh")
-def api_refresh():
+def api_refresh(request: Request):
     """Ask for a fresh scan. Single-flight: if one is already running you are
     told so and should just attach to the stream. Debounced manual refreshes
-    return 429 so clients can back off."""
+    return 429 so clients can back off. Admins only when user auth is on."""
+    user = identity.current_user(request)
+    if config.auth_providers_active():
+        if not user or user.get("role") != "admin":
+            return JSONResponse({"error": "admin only"}, status_code=403)
     if config.ROLE == "api":
         return JSONResponse(
             {"started": False, "scanning": False,
@@ -555,6 +470,9 @@ def movers_desk():
     return _tool_html("movers")
 
 
+identity.register(app, tool_html=_tool_html, gp_parse=_gp)
+
+
 def main():
     import uvicorn
     config.assert_deploy_safe()
@@ -562,9 +480,13 @@ def main():
         worker.run_writer_forever()
         return
     db.init_db()
-    if not config.CLAN_PASSWORD:
-        print("! CLAN_PASSWORD is unset — the app is open to anyone who can "
-              "reach it. Fine on localhost; set it before exposing the port.")
+    if not config.auth_required():
+        print("! Auth unset — the app is open to anyone who can reach it. "
+              "Fine on localhost; configure Discord, invites, or CLAN_PASSWORD "
+              "before exposing the port.")
+    elif config.auth_providers_active():
+        print("Auth: Discord=%s invites=%s" % (
+            config.discord_configured(), config.INVITES_ENABLED))
     uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="info")
 
 

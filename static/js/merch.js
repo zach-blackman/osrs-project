@@ -12,7 +12,76 @@ var ALL_COLS = [
 var WATCH = (function(){
   try { return JSON.parse(localStorage.getItem("merchdesk.watch") || "[]"); } catch (e) { return []; }
 })();
-function saveWatch(){ try { localStorage.setItem("merchdesk.watch", JSON.stringify(WATCH)); } catch(e){} }
+var SERVER_ME = false;
+function saveWatch(){
+  try { localStorage.setItem("merchdesk.watch", JSON.stringify(WATCH)); } catch(e){}
+}
+function persistWatch(itemId, watched) {
+  saveWatch();
+  if (!SERVER_ME) return;
+  var opts = { method: watched ? "PUT" : "DELETE" };
+  fetch("/api/me/watchlist/" + itemId, opts).catch(function(){});
+}
+function persistPrefs() {
+  if (!SERVER_ME) return;
+  var body = {
+    capital: ($("capital") && $("capital").value.trim()) || undefined,
+    floor: ($("floor") && $("floor").value.trim()) || undefined,
+    theme: document.documentElement.getAttribute("data-theme") || "dark",
+    merch_filters: FILTERS
+  };
+  fetch("/api/me/prefs", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  }).catch(function(){});
+}
+function loadAlerts() {
+  if (!SERVER_ME) return;
+  fetch("/api/me/alerts/active").then(function(r){ return r.json(); }).then(function(d){
+    var el = $("alert-banner");
+    if (!el) return;
+    var alerts = d.alerts || [];
+    if (!alerts.length) { el.hidden = true; el.textContent = ""; return; }
+    el.hidden = false;
+    el.textContent = "Watch alerts: " + alerts.map(function(a){
+      return a.name + " (" + (a.reasons || []).join("/") + ")";
+    }).join(" · ");
+  }).catch(function(){});
+}
+function hydrateFromMe(me) {
+  if (!me || !me.user) return;
+  SERVER_ME = true;
+  var ids = (me.watchlist || []).map(function(w){ return w.item_id; });
+  if (ids.length || !(WATCH && WATCH.length)) {
+    WATCH = ids;
+    saveWatch();
+  } else if (WATCH.length) {
+    // One-time migrate local watchlist to server when server empty.
+    WATCH.forEach(function(id){
+      fetch("/api/me/watchlist/" + id, { method: "PUT" }).catch(function(){});
+    });
+  }
+  var p = me.prefs || {};
+  if (p.capital != null && $("capital")) {
+    $("capital").value = gp(p.capital);
+    if ($("mobile-capital")) $("mobile-capital").value = gp(p.capital);
+  }
+  if (p.floor != null && $("floor")) {
+    $("floor").value = gp(p.floor);
+    if ($("mobile-floor")) $("mobile-floor").value = gp(p.floor);
+  }
+  if (p.merch_filters && typeof p.merch_filters === "object") {
+    FILTERS = Object.assign(FILTERS, p.merch_filters);
+    saveFilters();
+    syncFilterUI();
+  }
+  if (p.theme && window.ClanShell && ClanShell.applyTheme) {
+    ClanShell.applyTheme(p.theme);
+  }
+  loadAlerts();
+}
+document.addEventListener("shell:me", function(ev){ hydrateFromMe(ev.detail); });
 var ANALYSIS_NOTE = "";
 
 var FILTERS = loadFilters();
@@ -157,12 +226,14 @@ function syncCapFloorInputs(fromMobile) {
     if ($("mobile-floor")) $("mobile-floor").value = $("floor").value;
   }
 }
-function savePrefs() {
+function savePrefsLocal() {
   try {
     localStorage.setItem("merch.capital", $("capital").value.trim());
     localStorage.setItem("merch.floor", $("floor").value.trim());
   } catch (e) {}
+  persistPrefs();
 }
+function savePrefs() { savePrefsLocal(); }
 
 /* -------------------------------------------------------- column resize */
 
@@ -856,8 +927,9 @@ function renderAction() {
   $("ax-copy-sell").addEventListener("click", function(){ copyTxt($("ax-copy-sell"), r.sell_price); });
   $("ax-watch").addEventListener("click", function(){
     var i = WATCH.indexOf(r.id);
-    if (i === -1) WATCH.push(r.id); else WATCH.splice(i, 1);
-    saveWatch(); renderAction();
+    if (i === -1) { WATCH.push(r.id); persistWatch(r.id, true); }
+    else { WATCH.splice(i, 1); persistWatch(r.id, false); }
+    renderAction();
   });
   $("ax-score-toggle").addEventListener("click", function(){
     var on = $("ax-score-detail").classList.toggle("on");

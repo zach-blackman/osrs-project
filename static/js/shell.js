@@ -6,6 +6,7 @@
   // Pair with static/tools/<id>.html, GET /<id> via _tool_html, and /api/<id>/….
   var TOOLS = [
     { id: "merch", href: "/merch", label: "Merch Desk", status: "live" },
+    { id: "achievements", href: "/achievements", label: "Achievements", status: "live" },
     { id: "alch", href: "/alch", label: "Alch Desk", status: "soon" },
     { id: "movers", href: "/movers", label: "Movers Desk", status: "soon" }
   ];
