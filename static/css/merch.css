@@ -241,6 +241,10 @@ td.err { color: var(--loss); }
 .ax-watch:hover { color: var(--accent); background: var(--hover); }
 .ax-watch.on { color: var(--accent); }
 .ax-watch svg { display: block; flex: 0 0 auto; }
+.alert-banner {
+  flex: 0 0 auto; padding: 8px 14px; background: var(--well); border-bottom: 1px solid var(--line);
+  color: var(--amb); font-size: 12px; font-weight: 600;
+}
 .ax-sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .ax-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .ghost, a.ghost {

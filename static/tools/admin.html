@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Movers Desk — Clan Tools</title>
+<title>Admin — Clan Tools</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/shell.css">
-<link rel="stylesheet" href="/static/css/movers.css">
+<link rel="stylesheet" href="/static/css/admin.css">
 </head>
-<body class="shell-body" data-tool="movers">
+<body class="shell-body" data-tool="admin">
 
   <div id="nav-backdrop" aria-hidden="true"></div>
   <aside id="nav-drawer" aria-hidden="true" aria-label="Tools">
@@ -19,7 +19,7 @@
       <button type="button" class="nav-drawer-close" id="nav-drawer-close" aria-label="Close menu">&times;</button>
     </div>
     <ul class="nav-tools" id="nav-tools"></ul>
-    <div class="nav-drawer-foot">Shared market snapshots — Merch flips, Alch profits, Movers pulses.</div>
+    <div class="nav-drawer-foot">Admin — invites and members.</div>
   </aside>
 
   <header id="shell-top">
@@ -28,11 +28,9 @@
     </button>
     <div class="shell-brand">
       <div class="name">Clan <em>Tools</em></div>
-      <div class="sub">Movers Desk · pulse movers</div>
+      <div class="sub">Admin</div>
     </div>
-    <div id="tool-chrome">
-      <div id="statusline"><span class="lamp" id="lamp" aria-hidden="true"></span><span id="status">loading…</span></div>
-    </div>
+    <div id="tool-chrome"></div>
     <div class="shell-actions">
       <button id="theme-toggle" type="button" title="Switch to light mode" aria-label="Switch to light mode">
         <svg class="theme-icon theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -47,18 +45,22 @@
   </header>
 
   <div id="tool-slot">
-    <div class="desk-stub">
-      <h1>Movers Desk</h1>
-      <p class="lede">Surfaces items that just moved in price or spiked in 1h volume across the shared 10-minute pulse — the same snapshots Merch Desk already stores.</p>
-      <p class="badge-soon">Scaffold — API live at <code>/api/movers</code>; full desk UI coming next.</p>
-      <div id="stub-summary" class="stub-summary">Checking pulse…</div>
-      <p class="foot-note">Pure DB derivation — no extra wiki calls. Needs at least two ok pulsed scans. Heuristic score, not backtested.</p>
+    <div class="admin-wrap">
+      <section>
+        <h1>Invites</h1>
+        <p class="lede">Create a one-time invite for members without Discord.</p>
+        <button type="button" id="mk-invite" class="primary">Create invite</button>
+        <pre id="invite-out" class="out" hidden></pre>
+      </section>
+      <section>
+        <h1>Members</h1>
+        <div id="user-list" class="user-list">loading…</div>
+      </section>
     </div>
   </div>
 
 <script src="/static/js/shell.js"></script>
 <script src="/static/js/shell-user.js"></script>
-<script src="/static/js/tool-status.js"></script>
-<script src="/static/js/movers.js"></script>
+<script src="/static/js/admin.js"></script>
 </body>
 </html>
