@@ -138,6 +138,63 @@ def main():
     check(admin_client.get("/admin").status_code == 200, "/admin serves for admin")
     check(client.get("/admin").status_code in (303, 401, 200),
           "non-admin admin page gated")
+    check(client.get("/account").status_code == 200, "/account serves for signed-in")
+    bare_acct = TestClient(web.app)
+    check(bare_acct.get("/account", follow_redirects=False).status_code == 303,
+          "/account redirects when unsigned")
+
+    print("\nprofile + public user shape")
+    me_shape = client.get("/api/me").json()["user"]
+    check(isinstance(me_shape.get("created_at"), str)
+          and "T" in me_shape["created_at"], "created_at is ISO")
+    check(me_shape.get("effective_name") == "bob", "effective_name defaults")
+    check(me_shape.get("auth_provider") == "invite", "invite auth_provider")
+    prf = client.put("/api/me/profile", json={
+        "display_name": "Bobby", "rsn": "BobRSN", "theme": "light"})
+    check(prf.status_code == 200, "profile put ok")
+    pu = prf.json()["user"]
+    check(pu["display_name"] == "Bobby" and pu["effective_name"] == "Bobby",
+          "display_name override")
+    check(pu["rsn"] == "BobRSN", "rsn saved")
+    check(prf.json()["prefs"]["theme"] == "light", "theme saved via profile")
+
+    print("\nsession slide")
+    bob = userdb.get_user_by_username("bob")
+    with web.db.engine().connect() as cx:
+        import sqlalchemy as sa
+        before = cx.execute(
+            sa.select(userdb.sessions)
+            .where(userdb.sessions.c.user_id == bob["id"])
+            .order_by(userdb.sessions.c.created_at.desc())
+        ).mappings().first()
+    check(before is not None, "session row exists")
+    sid = before["id"]
+    slid = userdb.touch_session(sid, config.SESSION_TTL_SEC, min_interval=0)
+    check(slid is True, "touch_session slides when interval=0")
+    with web.db.engine().connect() as cx:
+        after = cx.execute(sa.select(userdb.sessions).where(
+            userdb.sessions.c.id == sid)).mappings().first()
+    check(after["expires_at"] >= before["expires_at"]
+          and (after["last_seen_at"] or 0) >= (before["last_seen_at"] or 0),
+          "session expiry/last_seen advanced")
+    login_before = userdb.get_user(bob["id"])["last_login_at"]
+    userdb.touch_session(sid, config.SESSION_TTL_SEC, min_interval=0)
+    login_after = userdb.get_user(bob["id"])["last_login_at"]
+    check(login_before == login_after, "slide does not bump last_login_at")
+
+    print("\nadmin member search")
+    listed = admin_client.get("/api/admin/users").json()
+    check("total" in listed and "users" in listed, "admin users paginated shape")
+    check(isinstance(listed["users"][0].get("last_login_at"), (str, type(None))),
+          "admin last_login_at ISO or null")
+    hit = admin_client.get("/api/admin/users?q=Bobby").json()
+    check(hit["total"] >= 1 and any(
+        u.get("effective_name") == "Bobby" for u in hit["users"]),
+          "admin search finds display name")
+    miss = admin_client.get("/api/admin/users?q=zzznobody").json()
+    check(miss["total"] == 0, "admin search empty for unknown")
+    page = admin_client.get("/api/admin/users?per_page=1&page=1").json()
+    check(page["per_page"] == 1 and len(page["users"]) == 1, "admin per_page=1")
 
     print()
     if failures:

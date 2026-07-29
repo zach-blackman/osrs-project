@@ -41,9 +41,10 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 _ASSET_REF = re.compile(r'((?:href|src)="/static/[^"?]+)(")')
 _STATIC_FINGERPRINT_FILES = (
     "css/shell.css", "css/merch.css", "css/alch.css", "css/movers.css",
-    "css/achievements.css", "css/admin.css",
+    "css/achievements.css", "css/admin.css", "css/account.css",
     "js/shell.js", "js/merch.js", "js/alch.js", "js/movers.js",
     "js/tool-status.js", "js/achievements.js", "js/admin.js", "js/shell-user.js",
+    "js/account.js",
 )
 
 
@@ -71,7 +72,11 @@ async def require_login(request: Request, call_next):
         if path.startswith("/api/"):
             return JSONResponse({"error": "not signed in"}, status_code=401)
         return RedirectResponse("/login", status_code=303)
-    return await call_next(request)
+    response = await call_next(request)
+    if getattr(request.state, "slide_session", False) and getattr(
+            request.state, "session_id", None):
+        identity._set_session_cookie(response, request.state.session_id)
+    return response
 
 
 # ------------------------------------------------------------- lifecycle

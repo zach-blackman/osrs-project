@@ -19,7 +19,19 @@
       <button type="button" class="nav-drawer-close" id="nav-drawer-close" aria-label="Close menu">&times;</button>
     </div>
     <ul class="nav-tools" id="nav-tools"></ul>
-    <div class="nav-drawer-foot">Shared market snapshots — Merch flips, Alch profits, Movers pulses.</div>
+    <div class="nav-drawer-foot">
+      <button id="theme-toggle" type="button" title="Switch to light mode" aria-label="Switch to light mode">
+        <svg class="theme-icon theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+        <svg class="theme-icon theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/>
+        </svg>
+        <span class="theme-toggle-label">Appearance</span>
+      </button>
+      <div class="nav-drawer-blurb">Shared market snapshots — Merch flips, Alch profits, Movers pulses.</div>
+    </div>
   </aside>
 
   <header id="shell-top">
@@ -34,15 +46,6 @@
       <div id="statusline"><span class="lamp" id="lamp" aria-hidden="true"></span><span id="status">loading…</span></div>
     </div>
     <div class="shell-actions">
-      <button id="theme-toggle" type="button" title="Switch to light mode" aria-label="Switch to light mode">
-        <svg class="theme-icon theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="4"/>
-          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
-        </svg>
-        <svg class="theme-icon theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/>
-        </svg>
-      </button>
     </div>
   </header>
 

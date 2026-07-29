@@ -55,21 +55,29 @@ def _clear_session_cookie(resp):
     resp.delete_cookie(COOKIE_NAME)
 
 
-def start_user_session(user_id: int):
+def start_user_session(user_id: int, request: Request | None = None):
     sid = accounts.new_session_id()
-    userdb.create_session(user_id, sid, config.SESSION_TTL_SEC)
+    ua = None
+    if request is not None:
+        ua = (request.headers.get("user-agent") or "")[:256] or None
+    userdb.create_session(user_id, sid, config.SESSION_TTL_SEC, user_agent=ua)
     userdb.touch_login(user_id)
     return sid
 
 
 def resolve_request_user(request: Request):
-    """Attach request.state.user from the session cookie."""
+    """Attach request.state.user from the session cookie; slide session when due."""
     request.state.user = None
+    request.state.session_id = None
+    request.state.slide_session = False
     sid = request.cookies.get(COOKIE_NAME, "")
     if sid and config.auth_providers_active():
         row = userdb.get_session_user(sid)
         if row:
             request.state.user = row
+            request.state.session_id = sid
+            if userdb.touch_session(sid, config.SESSION_TTL_SEC):
+                request.state.slide_session = True
             return
 
 
@@ -191,7 +199,7 @@ def register(app, *, tool_html, gp_parse):
             user = userdb.get_user_by_username(username)
             if (user and user.get("password_hash") and not user.get("disabled_at")
                     and accounts.verify_password(password, user["password_hash"])):
-                sid = start_user_session(user["id"])
+                sid = start_user_session(user["id"], request)
                 resp = RedirectResponse("/merch", status_code=303)
                 _set_session_cookie(resp, sid)
                 return resp
@@ -232,20 +240,23 @@ def register(app, *, tool_html, gp_parse):
             access = tok["access_token"]
             du = discord_oauth.fetch_user(access)
             user = userdb.upsert_discord_user(
-                du["id"], discord_oauth.display_name(du), du.get("avatar"))
+                du["id"], discord_oauth.display_name(du), du.get("avatar"),
+                discord_username=du.get("username"))
             # Optional: link Discord onto existing invite session
             link_uid = request.cookies.get("link_user_id")
             if link_uid and not user.get("disabled_at"):
                 try:
-                    userdb.link_discord(int(link_uid), du["id"],
-                                        discord_oauth.display_name(du), du.get("avatar"))
+                    userdb.link_discord(
+                        int(link_uid), du["id"],
+                        discord_oauth.display_name(du), du.get("avatar"),
+                        discord_username=du.get("username"))
                     user = userdb.get_user(int(link_uid))
                 except ValueError:
                     pass
             if user.get("disabled_at"):
                 return HTMLResponse(login_html(error="Account disabled."),
                                     status_code=403)
-            sid = start_user_session(user["id"])
+            sid = start_user_session(user["id"], request)
             resp = RedirectResponse("/merch", status_code=303)
             _set_session_cookie(resp, sid)
             resp.delete_cookie("oauth_state")
@@ -286,7 +297,7 @@ def register(app, *, tool_html, gp_parse):
             password_hash=accounts.hash_password(password),
             role="user")
         userdb.claim_invite(accounts.hash_token(token), user["id"])
-        sid = start_user_session(user["id"])
+        sid = start_user_session(user["id"], request)
         resp = RedirectResponse("/merch", status_code=303)
         _set_session_cookie(resp, sid)
         return resp
@@ -351,6 +362,59 @@ def register(app, *, tool_html, gp_parse):
             theme=body.get("theme"), merch_filters=body.get("merch_filters"))
         return {"prefs": prefs}
 
+    @app.put("/api/me/profile")
+    async def api_me_profile(request: Request):
+        user = current_user(request)
+        if not user:
+            return JSONResponse({"error": "not signed in"}, status_code=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+
+        display_name = body.get("display_name")
+        rsn = body.get("rsn")
+        theme = body.get("theme")
+
+        if display_name is not None:
+            if not isinstance(display_name, str):
+                return JSONResponse({"error": "display_name must be a string"},
+                                    status_code=400)
+            display_name = display_name.strip()
+            if len(display_name) > 128:
+                return JSONResponse({"error": "display_name too long"},
+                                    status_code=400)
+        if rsn is not None:
+            if not isinstance(rsn, str):
+                return JSONResponse({"error": "rsn must be a string"},
+                                    status_code=400)
+            rsn = rsn.strip()
+            if len(rsn) > 12:
+                return JSONResponse({"error": "rsn too long (max 12)"},
+                                    status_code=400)
+        if theme is not None and theme not in ("light", "dark"):
+            return JSONResponse({"error": "theme must be light or dark"},
+                                status_code=400)
+
+        updated = userdb.update_profile(
+            user["id"],
+            display_name=display_name if "display_name" in body else None,
+            rsn=rsn if "rsn" in body else None)
+        if theme is not None:
+            prefs = userdb.upsert_prefs(user["id"], theme=theme)
+        else:
+            prefs = userdb.get_prefs(user["id"]) or {}
+        return {
+            "user": userdb._user_dict(updated),
+            "prefs": {
+                "capital": prefs.get("capital"),
+                "floor": prefs.get("floor"),
+                "nature_cost": prefs.get("nature_cost"),
+                "theme": prefs.get("theme"),
+                "merch_filters": prefs.get("merch_filters"),
+            },
+        }
+
     @app.put("/api/me/watchlist/{item_id}")
     async def api_watch_put(item_id: int, request: Request):
         user = current_user(request)
@@ -412,11 +476,26 @@ def register(app, *, tool_html, gp_parse):
         return {"token": token, "url": f"/invite/{token}"}
 
     @app.get("/api/admin/users")
-    def api_admin_users(request: Request):
+    def api_admin_users(request: Request,
+                        q: str = Query(""),
+                        page: int = Query(1, ge=1),
+                        per_page: int = Query(25, ge=1, le=100),
+                        status: str = Query("all")):
         user = current_user(request)
         if not user or user.get("role") != "admin":
             return JSONResponse({"error": "admin only"}, status_code=403)
-        return {"users": userdb.list_users()}
+        if status not in ("all", "active", "disabled"):
+            return JSONResponse(
+                {"error": "status must be all, active, or disabled"},
+                status_code=400)
+        rows, total = userdb.search_users(
+            q=q, page=page, per_page=per_page, status=status)
+        return {
+            "users": rows,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+        }
 
     @app.post("/api/admin/users/{user_id}/disable")
     def api_admin_disable(user_id: int, request: Request):
@@ -496,6 +575,12 @@ def register(app, *, tool_html, gp_parse):
         if not user or user.get("role") != "admin":
             return RedirectResponse("/login", status_code=303)
         return tool_html("admin")
+
+    @app.get("/account", response_class=HTMLResponse)
+    def account_page(request: Request):
+        if config.auth_providers_active() and not current_user(request):
+            return RedirectResponse("/login", status_code=303)
+        return tool_html("account")
 
     @app.get("/achievements", response_class=HTMLResponse)
     def achievements_desk():
