@@ -1,8 +1,40 @@
-#tool-slot { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.account-wrap { max-width: 560px; margin: 0 auto; padding: 24px 18px 40px; }
+#tool-slot { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+
+.account-layout {
+  display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+}
+
+.account-tabs {
+  display: flex; flex: 0 0 auto; gap: 0;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  padding: 0 12px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.account-tab {
+  flex: 0 0 auto; border: 0; background: transparent; color: var(--muted);
+  font: inherit; font-weight: 600; font-size: 13px;
+  padding: 12px 14px; min-height: 44px; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  white-space: nowrap;
+}
+.account-tab:hover { color: var(--ink); }
+.account-tab[aria-selected="true"] {
+  color: var(--accent); border-bottom-color: var(--accent);
+}
+.account-tab:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+}
+
+.account-wrap {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  max-width: 720px; width: 100%; margin: 0 auto;
+  padding: 24px 18px calc(40px + var(--safe-b));
+  box-sizing: border-box;
+}
 .account-wrap h1 { margin: 0 0 6px; font: 700 1.35rem/1.2 var(--sans); }
 .account-wrap .lede { color: var(--muted); margin: 0 0 14px; font-size: 13.5px; }
-.account-wrap section { margin-bottom: 32px; }
+.account-panel { margin: 0; }
+.account-panel[hidden] { display: none !important; }
 
 .account-profile-card {
   display: flex; gap: 16px; align-items: flex-start;
@@ -36,6 +68,7 @@
 
 .prefs-form {
   display: flex; flex-direction: column; gap: 12px;
+  max-width: 640px;
 }
 .prefs-form label {
   display: flex; flex-direction: column; gap: 4px;
@@ -49,6 +82,16 @@
 .prefs-form input:focus, .prefs-form select:focus {
   outline: none; border-color: var(--accent);
 }
+.prefs-form input[readonly] {
+  color: var(--muted); background: var(--well); cursor: default;
+}
+.prefs-form input[readonly]:focus {
+  border-color: var(--line);
+}
+.prefs-form .field-hint,
+.account-panel .field-hint {
+  font-weight: 400; font-size: 11.5px; color: var(--faint); line-height: 1.35;
+}
 .prefs-actions {
   display: flex; align-items: center; gap: 12px; margin-top: 4px;
 }
@@ -61,3 +104,163 @@
 .prefs-status { font-size: 12.5px; color: var(--muted); }
 .prefs-status.ok { color: var(--gain); }
 .prefs-status.err { color: var(--loss); }
+
+.prefs-form .ghost, .clan-verify .ghost {
+  border: 1px solid var(--line2); background: var(--surface); color: var(--ink);
+  font-weight: 500; padding: 8px 12px; border-radius: 2px; cursor: pointer;
+  min-height: 36px; font-size: 12.5px;
+}
+.prefs-form .ghost:hover, .clan-verify .ghost:hover {
+  border-color: var(--accent); color: var(--accent);
+}
+
+.hiscores-empty {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
+}
+.hiscores-empty .ghost {
+  border: 1px solid var(--line2); background: var(--surface); color: var(--ink);
+  font-weight: 500; padding: 10px 14px; border-radius: 2px; cursor: pointer;
+  min-height: 44px; font-size: 13px;
+}
+.hiscores-empty .ghost:hover {
+  border-color: var(--accent); color: var(--accent);
+}
+.account-text-link {
+  border: 0; background: none; padding: 0; margin: 0;
+  font: inherit; font-weight: 600; color: var(--accent); cursor: pointer;
+  text-decoration: none;
+}
+.account-text-link:hover { text-decoration: underline; }
+
+.clan-panel, .clan-stats-panel {
+  padding: 14px 16px; border: 1px solid var(--line); background: var(--panel);
+  margin-bottom: 14px;
+}
+.clan-panel.is-muted, .clan-stats-panel.is-muted { color: var(--muted); font-size: 13px; }
+.clan-panel.is-err, .clan-stats-panel.is-err { color: var(--loss); font-size: 13px; }
+.clan-panel .clan-name { font-weight: 700; font-size: 1.05rem; margin: 0 0 8px; }
+.clan-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.clan-badge {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.03em; padding: 3px 8px; border-radius: 2px;
+  border: 1px solid var(--line); color: var(--muted); background: var(--well);
+}
+.clan-badge.on { color: var(--accent); border-color: var(--accent); }
+.clan-badge.tier-verified { color: var(--gain); border-color: var(--gain); }
+.clan-panel dl {
+  margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+  font-size: 12.5px;
+}
+.clan-panel dt { color: var(--faint); }
+.clan-panel dd { margin: 0; color: var(--muted); }
+.clan-panel a { color: var(--accent); text-decoration: none; }
+.clan-panel a:hover { text-decoration: underline; }
+
+.clan-verify h2, .clan-stats h2 {
+  margin: 0 0 6px; font: 600 1rem/1.2 var(--sans);
+}
+.clan-verify-actions { flex-wrap: wrap; margin-bottom: 8px; }
+
+.clan-stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px; margin-top: 10px;
+}
+.clan-stat-cell {
+  padding: 8px 10px; background: var(--well); border-radius: 2px;
+}
+.clan-stat-cell .label {
+  font-size: 11px; color: var(--faint); text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.clan-stat-cell .val {
+  font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--ink);
+  margin-top: 2px;
+}
+
+/* —— Hiscores (WOM) —— */
+.hiscores-panel {
+  padding: 14px 16px; border: 1px solid var(--line); background: var(--panel);
+  min-height: 48px;
+}
+.hiscores-panel.is-muted { color: var(--muted); font-size: 13px; }
+.hiscores-panel.is-err { color: var(--loss); font-size: 13px; }
+.hiscores-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px;
+  margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.hiscores-head .hs-name {
+  font-weight: 700; font-size: 1.05rem; color: var(--ink);
+}
+.hiscores-head .hs-combat {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+}
+.hiscores-head .hs-type {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--accent);
+}
+.hiscores-head a.hs-wom {
+  margin-left: auto; font-size: 12px; color: var(--accent); text-decoration: none;
+}
+.hiscores-head a.hs-wom:hover { text-decoration: underline; }
+.hiscores-meta {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  margin: 0 0 12px; font-size: 12px; color: var(--faint);
+  font-family: var(--mono);
+}
+.hiscores-meta strong { color: var(--muted); font-weight: 500; }
+.hiscores-subhead {
+  margin: 14px 0 8px; font-size: 0.85rem; font-weight: 650;
+  letter-spacing: 0.02em; color: var(--ink);
+}
+.hiscores-subhead:first-of-type { margin-top: 4px; }
+.hiscores-note {
+  margin: -4px 0 8px; font-size: 12px; color: var(--faint); line-height: 1.35;
+}
+.hiscores-icon {
+  width: 24px; height: 24px; object-fit: contain;
+  flex: 0 0 auto;
+}
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 8px;
+}
+.boss-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.boss-cell .skill-lvl { min-width: 2.4em; }
+.skill-cell {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px; background: var(--well); border-radius: 2px;
+  min-height: 32px;
+}
+.skill-cell .skill-lvl {
+  font-family: var(--mono); font-size: 12.5px; font-weight: 500;
+  color: var(--ink); min-width: 1.6em;
+}
+.skill-cell .skill-name {
+  font-size: 11px; color: var(--faint); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .account-tabs { padding: 0 8px; }
+  .account-tab { padding: 12px 12px; font-size: 12.5px; }
+  .account-wrap { padding: 18px 14px calc(28px + var(--safe-b)); }
+  .account-profile-card { flex-direction: column; align-items: flex-start; }
+  .clan-verify-actions {
+    flex-direction: column; align-items: stretch;
+  }
+  .clan-verify .ghost {
+    width: 100%; min-height: 44px; justify-content: center;
+  }
+  .prefs-form .primary { min-height: 44px; }
+}
+
+@media (max-width: 480px) {
+  .skill-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .boss-grid { grid-template-columns: minmax(0, 1fr); }
+  .hiscores-head a.hs-wom { margin-left: 0; width: 100%; }
+}
